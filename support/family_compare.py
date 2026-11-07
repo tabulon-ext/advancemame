@@ -91,12 +91,20 @@ from collections import defaultdict
 
 
 def find_executables():
-    """Verify presence of advmame and mame in PATH."""
-    advmame_path = shutil.which("advmame")
+    """Verify presence of advmame and mame, prioritizing the local build binary."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+    local_advmame = os.path.join(repo_root, "obj", "mame", "linux", "blend", "advmame")
+
+    if os.path.isfile(local_advmame) and os.access(local_advmame, os.X_OK):
+        advmame_path = local_advmame
+    else:
+        advmame_path = shutil.which("advmame")
+
     mame_path = shutil.which("mame")
 
     if not advmame_path:
-        sys.stderr.write("ERROR: Could not find 'advmame' in PATH.\n")
+        sys.stderr.write("ERROR: Could not find 'advmame' in obj/mame/linux/blend/ or in PATH.\n")
         sys.exit(1)
     if not mame_path:
         sys.stderr.write("ERROR: Could not find 'mame' in PATH.\n")
@@ -475,12 +483,18 @@ def main():
     print(f"      AdvanceMAME : {len(adv_families):,} families.")
     print(f"      MAME        : {len(mame_families):,} families (families with only preliminary games excluded).\n")
 
-    # Key ROM -> game index in MAME for identifying renamed sets and parents
+    # Key ROM -> game index in MAME and AdvanceMAME for identifying renamed sets and parents
     mame_keyrom_to_games = defaultdict(list)
     for gname in mame_g2f:
         ginfo = mame_games[gname]
         if ginfo.key_rom:
             mame_keyrom_to_games[ginfo.key_rom].append(gname)
+
+    adv_keyrom_to_games = defaultdict(list)
+    for gname in adv_g2f:
+        ginfo = adv_games[gname]
+        if ginfo.key_rom:
+            adv_keyrom_to_games[ginfo.key_rom].append(gname)
 
     print("[4/4] Comparing game families between emulators...\n", flush=True)
 
@@ -551,10 +565,11 @@ def main():
         else:
             # Method 2: Fallback via Key ROM (if parent and all clones were renamed)
             if adv_p_info.key_rom and adv_p_info.key_rom in mame_keyrom_to_games:
-                for mame_match_name in mame_keyrom_to_games[adv_p_info.key_rom]:
-                    if mame_match_name in mame_g2f:
-                        mame_p_name = mame_g2f[mame_match_name]
-                        break
+                valid_candidates = [mn for mn in mame_keyrom_to_games[adv_p_info.key_rom] if mn in mame_g2f]
+                if valid_candidates:
+                    # Select candidate with highest ROM hash overlap with AdvanceMAME parent
+                    best_match = max(valid_candidates, key=lambda mn: len(adv_p_info.rom_hashes & mame_games[mn].rom_hashes))
+                    mame_p_name = mame_g2f[best_match]
 
         if not mame_p_name:
             # Family only in AdvanceMAME
@@ -723,15 +738,15 @@ def main():
             a_info = adv_games[a_clone]
             if not a_info.key_rom:
                 continue
-            for m_clone in sorted(mame_unmatched_clones):
-                if m_clone in mame_matched_by_key:
-                    continue
-                m_info = mame_games[m_clone]
-                if a_info.key_rom == m_info.key_rom:
-                    renamed_clones.append((a_clone, m_clone))
-                    adv_matched_by_key.add(a_clone)
-                    mame_matched_by_key.add(m_clone)
-                    break
+            candidates = [
+                mc for mc in sorted(mame_unmatched_clones)
+                if mc not in mame_matched_by_key and a_info.key_rom == mame_games[mc].key_rom
+            ]
+            if candidates:
+                best_m = max(candidates, key=lambda mc: len(a_info.rom_hashes & mame_games[mc].rom_hashes))
+                renamed_clones.append((a_clone, best_m))
+                adv_matched_by_key.add(a_clone)
+                mame_matched_by_key.add(best_m)
 
         clones_renamed_total += len(renamed_clones)
 
@@ -805,7 +820,16 @@ def main():
         mame_sources = sorted({mame_games[m].sourcefile for m in mame_members if mame_games[m].sourcefile})
         primary_mame_source = mame_p_info.sourcefile or "unknown"
 
-        shared = [m for m in mame_members if m in adv_g2f]
+        shared = []
+        for m in mame_members:
+            if m in adv_g2f:
+                shared.append(m)
+            elif mame_games[m].key_rom and mame_games[m].key_rom in adv_keyrom_to_games:
+                candidates = adv_keyrom_to_games[mame_games[m].key_rom]
+                best_adv = max(candidates, key=lambda c: len(mame_games[m].rom_hashes & adv_games[c].rom_hashes))
+                if len(mame_games[m].rom_hashes & adv_games[best_adv].rom_hashes) >= 2:
+                    shared.append(best_adv)
+
         if shared:
             adv_orig_fams = sorted({adv_g2f[m] for m in shared})
             split_data = {
@@ -817,7 +841,7 @@ def main():
                 "adv_orig_fams": adv_orig_fams,
             }
             mame_split_families.append(split_data)
-            if (not args.game or args.game in mame_members) and show_mame_only and not args.summary_only:
+            if (not args.game or args.game in mame_members or args.game in shared) and show_mame_only and not args.summary_only:
                 mame_only_by_source[primary_mame_source].append(("split", split_data))
         else:
             only_data = {
