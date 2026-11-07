@@ -7,7 +7,7 @@ streaming their XML outputs directly via pipes in O(1) memory to compare game
 families across emulator generations (MAME 0.106 baseline vs modern MAME).
 MAME machines are automatically filtered using 'support/external/catver.ini' and
 arcade heuristics (excluding isdevice, isbios, ismechanical, non-runnables, and
-preliminary status drivers) to focus strictly on working arcade games.
+families containing only preliminary status drivers) to focus strictly on working arcade games.
 
 It identifies sets by their "Key ROM" (largest dumped ROM by size, breaking ties
 with the lowest hexadecimal CRC) to accurately track:
@@ -117,9 +117,10 @@ class GameInfo:
         "rom_count",
         "total_rom_size",
         "rom_hashes",
+        "is_preliminary",
     )
 
-    def __init__(self, name, sourcefile, description, category, cloneof, romof, key_rom, rom_count, total_rom_size, rom_hashes):
+    def __init__(self, name, sourcefile, description, category, cloneof, romof, key_rom, rom_count, total_rom_size, rom_hashes, is_preliminary=False):
         self.name = name
         self.sourcefile = sourcefile
         self.description = description
@@ -130,6 +131,7 @@ class GameInfo:
         self.rom_count = rom_count
         self.total_rom_size = total_rom_size
         self.rom_hashes = rom_hashes  # set of (size, crc_lower)
+        self.is_preliminary = is_preliminary
 
 
 NON_ARCADE_CATEGORIES = {
@@ -171,6 +173,7 @@ NON_ARCADE_CATEGORIES = {
     "TV Bundle",
     "TTL * Quiz",
     "Misc.",
+    "MultiGame",
 }
 
 
@@ -243,7 +246,7 @@ def parse_listxml_stream(cmd, is_advmame=False, catver=None):
 
         for event, elem in context:
             if event == "end" and elem.tag == target_tag:
-                # In modern MAME, discard devices, BIOS, mechanical, non-runnables, and preliminary drivers
+                # In modern MAME, discard devices, BIOS, mechanical, non-runnables
                 if not is_advmame:
                     if elem.attrib.get("isdevice") == "yes":
                         root.clear()
@@ -255,11 +258,6 @@ def parse_listxml_stream(cmd, is_advmame=False, catver=None):
                         root.clear()
                         continue
                     if elem.attrib.get("runnable") == "no":
-                        root.clear()
-                        continue
-
-                    drv = elem.find("driver")
-                    if drv is not None and drv.attrib.get("status") == "preliminary":
                         root.clear()
                         continue
 
@@ -281,6 +279,9 @@ def parse_listxml_stream(cmd, is_advmame=False, catver=None):
 
                 desc_elem = elem.find("description")
                 description = desc_elem.text.strip() if (desc_elem is not None and desc_elem.text) else ""
+
+                drv = elem.find("driver")
+                is_preliminary = (drv is not None and drv.attrib.get("status") == "preliminary")
 
                 valid_roms = []
                 total_size = 0
@@ -327,6 +328,7 @@ def parse_listxml_stream(cmd, is_advmame=False, catver=None):
                     rom_count=len(valid_roms),
                     total_rom_size=total_size,
                     rom_hashes=rom_hashes,
+                    is_preliminary=is_preliminary,
                 )
 
                 root.clear()
@@ -367,6 +369,24 @@ def build_families(games):
             families[parent_name]["clones"].add(name)
 
     return dict(families), game_to_family
+
+
+def filter_preliminary_families(families, g2f, games):
+    """
+    Excludes families where ALL member games have preliminary driver status.
+    Keeps any family where at least one member is working (non-preliminary).
+    """
+    filtered_families = {}
+    filtered_g2f = {}
+    for parent_name, fam in families.items():
+        members = {parent_name} | fam["clones"]
+        # Keep family if at least one member is not preliminary
+        if any(not games[m].is_preliminary for m in members if m in games):
+            filtered_families[parent_name] = fam
+            for m in members:
+                filtered_g2f[m] = parent_name
+    return filtered_families, filtered_g2f
+
 
 
 def main():
@@ -450,13 +470,15 @@ def main():
     print("[3/4] Grouping and indexing game families...", flush=True)
     adv_families, adv_g2f = build_families(adv_games)
     mame_families, mame_g2f = build_families(mame_games)
+    mame_families, mame_g2f = filter_preliminary_families(mame_families, mame_g2f, mame_games)
 
     print(f"      AdvanceMAME : {len(adv_families):,} families.")
-    print(f"      MAME        : {len(mame_families):,} families.\n")
+    print(f"      MAME        : {len(mame_families):,} families (families with only preliminary games excluded).\n")
 
     # Key ROM -> game index in MAME for identifying renamed sets and parents
     mame_keyrom_to_games = defaultdict(list)
-    for gname, ginfo in mame_games.items():
+    for gname in mame_g2f:
+        ginfo = mame_games[gname]
         if ginfo.key_rom:
             mame_keyrom_to_games[ginfo.key_rom].append(gname)
 
@@ -529,8 +551,10 @@ def main():
         else:
             # Method 2: Fallback via Key ROM (if parent and all clones were renamed)
             if adv_p_info.key_rom and adv_p_info.key_rom in mame_keyrom_to_games:
-                mame_match_name = mame_keyrom_to_games[adv_p_info.key_rom][0]
-                mame_p_name = mame_g2f[mame_match_name]
+                for mame_match_name in mame_keyrom_to_games[adv_p_info.key_rom]:
+                    if mame_match_name in mame_g2f:
+                        mame_p_name = mame_g2f[mame_match_name]
+                        break
 
         if not mame_p_name:
             # Family only in AdvanceMAME
