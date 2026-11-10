@@ -74,11 +74,6 @@ int run_sub(config_state& rs, bool silent)
 			}
 
 			switch (key) {
-			case EVENT_HELP:
-				// replay the sound and clip
-				silent = false;
-				run_help(rs);
-				break;
 			case EVENT_GROUP:
 				// replay the sound and clip
 				silent = false;
@@ -137,6 +132,11 @@ int run_sub(config_state& rs, bool silent)
 		}
 
 		switch (key) {
+		case EVENT_HELP:
+			// replay the sound and clip
+			silent = false;
+			run_help(rs);
+			break;
 		case EVENT_LOCK:
 			rs.lock_effective = !rs.lock_effective;
 			break;
@@ -687,6 +687,12 @@ int os_main(int argc, char* argv[])
 {
 	config_state rs;
 	adv_conf* config_context;
+	target_clock_t startup_start = 0;
+	target_clock_t t_cfg = 0;
+	target_clock_t t_rs = 0;
+	target_clock_t t_misc = 0;
+	target_clock_t t_os = 0;
+	target_clock_t t_video = 0;
 	bool opt_verbose;
 	bool opt_log;
 	bool opt_default;
@@ -699,7 +705,7 @@ int os_main(int argc, char* argv[])
 	const char* section_map[1];
 	char cfg_buffer[512];
 
-	srand(time(0));
+	srand(target_clock());
 
 	config_context = conf_init();
 
@@ -776,6 +782,9 @@ int os_main(int argc, char* argv[])
 
 	log_std(("menu: %s %s %s %s\n", "AdvanceMENU", ADV_VERSION, __DATE__, __TIME__));
 
+	startup_start = target_clock();
+	t_cfg = target_clock();
+
 	if (file_config_file_host("advmenu.rc") != 0) {
 		if (conf_input_file_load_adv(config_context, 4, file_config_file_host("advmenu.rc"), 0, 0, 1, STANDARD, sizeof(STANDARD) / sizeof(STANDARD[0]), error_callback, 0) != 0) {
 			goto err_init;
@@ -833,28 +842,40 @@ int os_main(int argc, char* argv[])
 		goto err_init;
 	}
 
+	log_std(("startup: load config files: %.2f ms\n", (double)(target_clock() - t_cfg) * 1000.0 / TARGET_CLOCKS_PER_SEC));
 	log_std(("menu: *_load()\n"));
 
+	t_rs = target_clock();
 	if (!rs.load(config_context, opt_verbose)) {
 		goto err_init;
 	}
+	log_std(("startup: rs.load: %.2f ms\n", (double)(target_clock() - t_rs) * 1000.0 / TARGET_CLOCKS_PER_SEC));
+
+	t_misc = target_clock();
 	if (!int_load(config_context)) {
 		goto err_init;
 	}
 	if (!play_load(config_context)) {
 		goto err_init;
 	}
+	log_std(("startup: int/play load: %.2f ms\n", (double)(target_clock() - t_misc) * 1000.0 / TARGET_CLOCKS_PER_SEC));
 
+	t_os = target_clock();
 	if (os_inner_init("AdvanceMENU") != 0) {
 		target_err("Error initializing the inner OS support.\n");
 		goto err_init;
 	}
+	log_std(("startup: os_inner_init (drivers init): %.2f ms\n", (double)(target_clock() - t_os) * 1000.0 / TARGET_CLOCKS_PER_SEC));
 
 	event_setup(rs.sound_foreground_key, rs.repeat, rs.repeat_rep, rs.alpha_mode);
 
+	t_video = target_clock();
 	if (!int_init(rs.video_sizex, rs.video_sizey)) {
 		goto err_inner_init;
 	}
+	log_std(("startup: int_init (video mode & screen init): %.2f ms\n", (double)(target_clock() - t_video) * 1000.0 / TARGET_CLOCKS_PER_SEC));
+
+	log_std(("startup: total startup time before menu: %.2f ms\n", (double)(target_clock() - startup_start) * 1000.0 / TARGET_CLOCKS_PER_SEC));
 
 	// print the messages after setting the video
 	target_flush();
@@ -892,7 +913,7 @@ done_init:
 
 	conf_done(config_context);
 
-	return EXIT_SUCCESS;
+	exit(EXIT_SUCCESS);
 
 err_inner_init:
 	os_inner_done();
@@ -903,6 +924,6 @@ err_init:
 
 err_conf:
 	conf_done(config_context);
-	return EXIT_FAILURE;
+	exit(EXIT_FAILURE);
 }
 

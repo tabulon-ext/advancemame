@@ -483,8 +483,8 @@ static adv_error parse_joystick_stick(int* v, const char* s, int joystick)
 		}
 	}
 
-	error_set("Invalid stick '%s'", s);
-	return -1;
+	*v = INPUT_STICK_MAX - 1; /* fake value, doesn't fail if the name is not present */
+	return 0;
 }
 
 static adv_error parse_joystick_stick_axe(int* v, const char* s, int joystick, int stick)
@@ -522,9 +522,8 @@ static adv_error parse_joystick_stick_axe(int* v, const char* s, int joystick, i
 		}
 	}
 
-	error_set("Invalid joystick axe '%s'", s);
-
-	return -1;
+	*v = INPUT_AXE_MAX - 1; /* fake value, doesn't fail if the name is not present */
+	return 0;
 }
 
 static adv_error parse_mouse_axe(int* v, const char* s, int mouse)
@@ -552,9 +551,8 @@ static adv_error parse_mouse_axe(int* v, const char* s, int mouse)
 		}
 	}
 
-	error_set("Invalid mouse axe '%s'", s);
-
-	return -1;
+	*v = INPUT_AXE_MAX - 1; /* fake value, doesn't fail if the name is not present */
+	return 0;
 }
 
 static adv_error parse_joystick_rel(int* v, const char* s, int joystick)
@@ -618,9 +616,8 @@ static adv_error parse_mouse_button_scan(int* v, const char* s, int mouse)
 		}
 	}
 
-	error_set("Invalid mouse button '%s'", s);
-
-	return -1;
+	*v = MOUSEB_MAX - 1; /* fake value, doesn't fail if the name is not present */
+	return 0;
 }
 
 static adv_error parse_mouse_button(int* v, const char* s, int mouse)
@@ -669,9 +666,8 @@ static adv_error parse_joystick_button_scan(int* v, const char* s, int joystick)
 		}
 	}
 
-	error_set("Invalid joystick button '%s'", s);
-
-	return -1;
+	*v = JOYB_MAX - 1; /* fake value, doesn't fail if the name is not present */
+	return 0;
 }
 
 static adv_error parse_joystick_button(int* v, const char* s, int joystick)
@@ -2205,6 +2201,8 @@ static adv_error input_load_map(struct advance_input_context* context, adv_conf*
 			s = conf_string_get_default(cfg_context, tag_buffer);
 			d = strdup(s);
 
+			log_std(("emu:input: input_map[%s] '%s'\n", tag_buffer, d));
+
 			if (parse_analog(context->config.analog_map[i][j].seq, d) != 0) {
 				free(d);
 				target_err("Invalid argument '%s' for option '%s'.\n%s.\n", s, tag_buffer, error_get());
@@ -2225,19 +2223,9 @@ static adv_error input_load_map(struct advance_input_context* context, adv_conf*
 		/* get the game option */
 		if (conf_string_get(cfg_context, tag_buffer, &s) == 0) {
 			char* d = strdup(s);
-			unsigned seq[INPUT_MAP_MAX];
-			if (advance_input_parse_digital(seq, INPUT_MAP_MAX, d) != 0) {
-				free(d);
-				target_err("Invalid argument '%s' for option '%s'.\n%s.\n", s, tag_buffer, error_get());
-				target_err("Valid format is keyboard[BOARD,KEY]/joystick_button[JOYSTICK,BUTTON]/mouse_button[MOUSE,BUTTON].\n");
-				return -1;
-			}
-			free(d);
-		}
 
-		/* get the default option */
-		if (conf_string_section_get(cfg_context, "", tag_buffer, &s) == 0) {
-			char* d = strdup(s);
+			log_std(("emu:input: input_map[%s] '%s'\n", tag_buffer, d));
+
 			unsigned seq[INPUT_MAP_MAX];
 			if (advance_input_parse_digital(seq, INPUT_MAP_MAX, d) != 0) {
 				free(d);
@@ -2619,7 +2607,7 @@ adv_bool advance_input_digital_pressed(struct advance_input_context* context, un
  * Another example is "cabal" that uses relative TRACKBALL input.
  * If relative is returned, it's applied as it's.
  * If absolute is returned, the value is used to scale
- * the digital input in src/intport.c:update_analog_port().
+ * the digital input in mame/intport.c:update_analog_port().
  *
  * Analog absolute inputs return a value between -65536 and +65536.
  *

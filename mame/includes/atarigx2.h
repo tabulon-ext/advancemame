@@ -1,0 +1,20 @@
+// license:BSD-3-Clause
+// copyright-holders:Aaron Giles
+/*************************************************************************
+
+    Atari G42 hardware
+
+*************************************************************************/
+
+/*----------- defined in vidhrdw/atarigx2.c -----------*/
+
+extern UINT16 atarigx2_playfield_base;
+extern UINT16 atarigx2_motion_object_base;
+extern UINT16 atarigx2_motion_object_mask;
+
+VIDEO_START( atarigx2 );
+VIDEO_UPDATE( atarigx2 );
+
+WRITE16_HANDLER( atarigx2_mo_control_w );
+
+void atarigx2_scanline_update(int scanline);

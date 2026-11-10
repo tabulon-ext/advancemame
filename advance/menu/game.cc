@@ -83,6 +83,7 @@ game::game(const game& A) :
 	session(A.session),
 	size(A.size),
 	rzs(A.rzs),
+	alt_name_bag(A.alt_name_bag),
 	clone_bag(A.clone_bag),
 	parent(A.parent),
 	machinedevice_bag(A.machinedevice_bag),
@@ -480,6 +481,15 @@ void game_set::cache(merge_t merge)
 
 		pair<dupe_set::const_iterator, bool> j = dar.insert(dupe(stripped_name, 0));
 		j.first->count_set(j.first->count_get() + 1);
+
+		/* an alias naming another game of the same emulator is a rename inside the emulator, not a duplicate */
+		std::string prefix = i->name_get().substr(0, i->name_get().find('/') + 1);
+		for (string_bag::const_iterator a = i->alt_name_bag_get().begin(); a != i->alt_name_bag_get().end(); ++a) {
+			if (*a != stripped_name && find(game(prefix + *a)) == end()) {
+				pair<dupe_set::const_iterator, bool> ja = dar.insert(dupe(*a, 0));
+				ja.first->count_set(ja.first->count_get() + 1);
+			}
+		}
 	}
 
 	// set dupe info
@@ -487,8 +497,33 @@ void game_set::cache(merge_t merge)
 		std::string stripped_name = file_file(i->name_get());
 
 		dupe_set::const_iterator j = dar.find(dupe(stripped_name, 0));
+		bool is_dupe = (j != dar.end() && (i->play_best_get() == play_preliminary || j->count_get() > 1));
 
-		i->flag_set(j != dar.end() && (i->play_best_get() == play_preliminary || j->count_get() > 1), game::flag_duplicate);
+		if (!is_dupe) {
+			for (string_bag::const_iterator a = i->alt_name_bag_get().begin(); a != i->alt_name_bag_get().end(); ++a) {
+				dupe_set::const_iterator ja = dar.find(dupe(*a, 0));
+				if (ja != dar.end() && (i->play_best_get() == play_preliminary || ja->count_get() > 1)) {
+					is_dupe = true;
+					break;
+				}
+			}
+		}
+
+		i->flag_set(is_dupe, game::flag_duplicate);
+	}
+
+	// propagate dupe info to parent games if any clone is duplicate
+	for (iterator i = begin(); i != end(); ++i) {
+		if (i->duplicate_get())
+			continue;
+
+		bool is_software = i->software_get();
+		for (pgame_container::const_iterator j = i->clone_bag_get().begin(); j != i->clone_bag_get().end(); ++j) {
+			if (is_software == (*j)->software_get() && (*j)->duplicate_get()) {
+				i->flag_set(true, game::flag_duplicate);
+				break;
+			}
+		}
 	}
 }
 

@@ -160,8 +160,8 @@ void advance_video_update_sync(struct advance_video_context* context)
 		}
 
 		/* disable if measure active */
-		if (context->state.measure_flag) {
-			log_std(("emu:video: vsync disabled because measure active\n"));
+		if (context->state.measure_flag || CONTEXT.record.config.debug_exit != 0) {
+			log_std(("emu:video: vsync disabled because performance measurement active\n"));
 			context->state.vsync_flag = 0;
 		}
 
@@ -339,7 +339,7 @@ static void video_frame_sync(struct advance_video_context* context)
 		/* the vsync is used only if all the frames are displayed */
 		if ((video_flags() & MODE_FLAGS_RETRACE_WAIT_SYNC) != 0
 			&& context->state.vsync_flag
-			&& context->state.skip_level_full == SYNC_MAX
+			&& context->state.skip_level_full == SYNC_MAX /* only if we are not skipping */
 		) {
 			double limit;
 			double error;
@@ -378,7 +378,7 @@ static void video_frame_sync(struct advance_video_context* context)
 			context->state.sync_pivot = 0;
 		} else if ((video_flags() & (MODE_FLAGS_RETRACE_SCROLL_SYNC | MODE_FLAGS_RETRACE_WRITE_SYNC)) != 0
 			&& context->state.vsync_flag
-			&& context->state.skip_level_full == SYNC_MAX
+			&& context->state.skip_level_full == SYNC_MAX /* only if we are not skipping */
 		) {
 			/*
 			 * We do nothing here, as we are going to vsync later when updating.
@@ -407,7 +407,9 @@ static void video_frame_sync(struct advance_video_context* context)
 			/* update the error state */
 			context->state.sync_pivot = expected - current;
 
-			if (context->state.sync_pivot < -context->state.skip_step * 16) {
+			if (context->config.frameskip_auto_flag
+				&& context->state.skip_level_full == SYNC_MAX /* only if we are not skipping */
+				&& context->state.sync_pivot < -context->state.skip_step * 16) {
 				/* if the error is too big (negative) the delay is unrecoverable */
 				/* generally it happen with a virtual terminal switch */
 				/* the best solution is to restart the sync computation */
@@ -446,6 +448,7 @@ void advance_video_sync(struct advance_video_context* context, struct advance_so
 
 		if (!context->state.fastest_flag
 			&& !context->state.measure_flag
+			&& CONTEXT.record.config.debug_exit == 0
 			&& context->state.sync_throttle_flag)
 			video_frame_sync(context);
 		else
@@ -456,7 +459,7 @@ void advance_video_sync(struct advance_video_context* context, struct advance_so
 
 		delay = context->state.skip_step;
 
-		context->state.latency_diff = advance_sound_latency_diff(sound_context, delay);
+		__atomic_store_n(&context->state.latency_diff, advance_sound_latency_diff(sound_context, delay), __ATOMIC_SEQ_CST);
 	} else {
 		++context->state.sync_skip_counter;
 	}
@@ -465,26 +468,30 @@ void advance_video_sync(struct advance_video_context* context, struct advance_so
 static void video_frame_skip(struct advance_video_context* context, struct advance_estimate_context* estimate_context)
 {
 	if (context->state.skip_warming_up_flag) {
+		double skip_step;
+
 		context->state.skip_flag = 0;
 		context->state.skip_level_counter = 0;
 
 		if (context->state.measure_flag) {
-			context->state.skip_step = 1.0 / context->state.game_fps;
+			skip_step = 1.0 / context->state.game_fps;
 			context->state.skip_level_full = 1;
 			context->state.skip_level_skip = 0;
 		} else if (context->state.fastest_flag) {
-			context->state.skip_step = 1.0 / context->state.game_fps;
+			skip_step = 1.0 / context->state.game_fps;
 			context->state.skip_level_full = 1;
 			context->state.skip_level_skip = SYNC_MAX;
 		} else if (context->state.turbo_flag) {
-			context->state.skip_step = 1.0 / (context->state.game_fps * context->config.turbo_speed_factor);
+			skip_step = 1.0 / (context->state.game_fps * context->config.turbo_speed_factor);
 		} else if (context->state.vsync_flag) {
-			context->state.skip_step = 1.0 / context->state.mode_vclock;
+			skip_step = 1.0 / context->state.mode_vclock;
 		} else {
-			context->state.skip_step = 1.0 / context->state.game_fps;
+			skip_step = 1.0 / context->state.game_fps;
 		}
 
-		advance_estimate_init(estimate_context, context->state.skip_step);
+		context->state.skip_step = skip_step;
+
+		advance_estimate_init(estimate_context, skip_step);
 
 		context->state.skip_warming_up_flag = 0;
 
@@ -525,6 +532,8 @@ void advance_video_skip(struct advance_video_context* context, struct advance_es
 	if (!context->state.sync_throttle_flag
 		|| advance_record_video_is_active(record_context)
 		|| advance_record_snapshot_is_active(record_context)
+		|| record_context->config.debug_snap_step != 0
+		|| record_context->config.debug_exit != 0
 	) {
 		video_frame_skip_none(context, estimate_context);
 	} else {

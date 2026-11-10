@@ -34,11 +34,8 @@
 
 #include "rgb.h"
 
-unsigned interp_mask[2];
 unsigned interp_red_mask, interp_green_mask, interp_blue_mask;
 int interp_red_shift, interp_green_shift, interp_blue_shift;
-unsigned interp_near_mask;
-unsigned interp_highnot_mask;
 
 /***************************************************************************/
 /* diff */
@@ -100,10 +97,6 @@ int interp_32_diff(interp_uint32 p1, interp_uint32 p2)
 	int y, u, v;
 	int i1, i2;
 
-	/* assume standard rgb formats */
-	if ((p1 & 0xF8F8F8) == (p2 & 0xF8F8F8))
-		return 0;
-
 	i1 = p1;
 	i2 = p2;
 
@@ -155,98 +148,6 @@ int interp_yuy2_diff(interp_uint32 p1, interp_uint32 p2)
 	return 0;
 }
 
-int interp_16_dist(interp_uint16 p1, interp_uint16 p2)
-{
-	int r, g, b;
-	int y4, u4, v8;
-	int i1, i2;
-
-	/* assume standard rgb formats */
-	if (p1 == p2)
-		return 0;
-
-	i1 = p1;
-	i2 = p2;
-
-	if (interp_green_mask == 0x7E0) {
-		b = ((i1 & 0x1F) - (i2 & 0x1F)) << 3;
-		g = ((i1 & 0x7E0) - (i2 & 0x7E0)) >> 3;
-		r = ((i1 & 0xF800) - (i2 & 0xF800)) >> 8;
-	} else {
-		b = ((i1 & 0x1F) - (i2 & 0x1F)) << 3;
-		g = ((i1 & 0x3E0) - (i2 & 0x3E0)) >> 2;
-		r = ((i1 & 0x7C00) - (i2 & 0x7C00)) >> 7;
-	}
-
-	if (b < 0) b = -b;
-	if (g < 0) g = -g;
-	if (r < 0) r = -r;
-
-	return 3 * r + 4 * g + 2 * b;
-}
-
-int interp_32_dist(interp_uint32 p1, interp_uint32 p2)
-{
-	int r, g, b;
-	int y, u, v;
-	int i1, i2;
-
-	/* assume standard rgb formats */
-	if ((p1 & 0xF8F8F8) == (p2 & 0xF8F8F8))
-		return 0;
-
-	i1 = p1;
-	i2 = p2;
-
-	b = ((i1 & 0xFF) - (i2 & 0xFF));
-	g = ((i1 & 0xFF00) - (i2 & 0xFF00)) >> 8;
-	r = ((i1 & 0xFF0000) - (i2 & 0xFF0000)) >> 16;
-
-	if (b < 0) b = -b;
-	if (g < 0) g = -g;
-	if (r < 0) r = -r;
-
-	return 3 * r + 4 * g + 2 * b;
-}
-
-int interp_yuy2_dist(interp_uint32 p1, interp_uint32 p2)
-{
-	int y;
-	int i1, i2;
-
-	if (p1 == p2)
-		return 0;
-
-	i1 = p1;
-	i2 = p2;
-
-	y = ((i1 & 0xFF) - (i2 & 0xFF));
-
-	if (y < 0) y = -y;
-
-	return y;
-}
-
-int interp_yuy2_dist3(interp_uint32 p1, interp_uint32 p2, interp_uint32 p3)
-{
-	int i1, i2, i3;
-
-	if (p1 == p2 && p2 == p3)
-		return 0;
-
-	i1 = p1 & 0xFF;
-	i2 = p2 & 0xFF;
-	i3 = p3 & 0xFF;
-
-	i1 -= i2;
-	i2 -= i3;
-
-	if (i1 < 0) i1 = -i1;
-	if (i2 < 0) i2 = -i2;
-
-	return i1 + i2;
-}
-
 void interp_set(unsigned color_def)
 {
 	if (color_def_type_get(color_def) == adv_color_type_rgb) {
@@ -257,22 +158,6 @@ void interp_set(unsigned color_def)
 		rgb_shiftmask_get(&interp_red_shift, &interp_red_mask, def.nibble.red_len, def.nibble.red_pos);
 		rgb_shiftmask_get(&interp_green_shift, &interp_green_mask, def.nibble.green_len, def.nibble.green_pos);
 		rgb_shiftmask_get(&interp_blue_shift, &interp_blue_mask, def.nibble.blue_len, def.nibble.blue_pos);
-
-		interp_mask[0] = interp_red_mask | interp_blue_mask;
-		interp_mask[1] = interp_green_mask;
-
-		interp_highnot_mask = (~rgb_highmask_make_from_def(color_def)) & rgb_wholemask_make_from_def(color_def);
-
-		interp_near_mask = ~(
-			((interp_red_mask >> 5) & interp_red_mask)
-			| ((interp_green_mask >> 5) & interp_green_mask)
-			| ((interp_blue_mask >> 5) & interp_blue_mask)
-			) & (interp_red_mask | interp_green_mask | interp_blue_mask);
-	} else {
-		interp_mask[0] = 0;
-		interp_mask[1] = 0;
-		interp_highnot_mask = 0;
-		interp_near_mask = 0;
 	}
 }
 

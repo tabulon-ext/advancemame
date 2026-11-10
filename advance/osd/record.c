@@ -54,22 +54,22 @@ static unsigned SOUND_FREQUENCY_MAP[] = {
 	0
 };
 
-static void sound_cancel(struct advance_record_context* context)
+static void sound_cancel(struct advance_record_sound_state* sound)
 {
-	if (!context->state.sound_active_flag)
+	if (!sound->active_flag)
 		return;
 
-	context->state.sound_active_flag = 0;
+	sound->active_flag = 0;
 
-	fclose(context->state.sound_f);
-	remove(context->state.sound_file_buffer);
+	fclose(sound->f);
+	remove(sound->file_buffer);
 }
 
-static adv_error sound_start(struct advance_record_context* context, const char* file, double frequency, int stereo)
+static adv_error sound_start(struct advance_record_sound_state* sound, const char* file, double frequency, int stereo)
 {
 	unsigned* f;
 
-	if (context->state.sound_active_flag)
+	if (sound->active_flag)
 		return -1;
 
 	/* adjust the frequency to match the MP3 standard */
@@ -81,37 +81,37 @@ static adv_error sound_start(struct advance_record_context* context, const char*
 			v = 1 / v;
 		v = 1 - v;
 		if (v < SOUND_FREQUENCY_ERROR) {
-			context->state.sound_frequency = *f;
+			sound->frequency = *f;
 			break;
 		}
 		++f;
 	}
 	if (!*f)
-		context->state.sound_frequency = frequency;
+		sound->frequency = frequency;
 
-	context->state.sound_stereo_flag = stereo;
-	context->state.sound_sample_counter = 0;
-	context->state.sound_sample_size = 2;
+	sound->stereo_flag = stereo;
+	sound->sample_counter = 0;
+	sound->sample_size = 2;
 	if (stereo)
-		context->state.sound_sample_size *= 2;
-	context->state.sound_stopped_flag = 0;
+		sound->sample_size *= 2;
+	sound->stopped_flag = 0;
 
-	sncpy(context->state.sound_file_buffer, sizeof(context->state.sound_file_buffer), file);
+	sncpy(sound->file_buffer, sizeof(sound->file_buffer), file);
 
-	context->state.sound_f = fopen(context->state.sound_file_buffer, "wb");
-	if (!context->state.sound_f) {
-		log_std(("ERROR: opening file %s\n", context->state.sound_file_buffer));
+	sound->f = fopen(sound->file_buffer, "wb");
+	if (!sound->f) {
+		log_std(("ERROR: opening file %s\n", sound->file_buffer));
 		return -1;
 	}
 
-	if (wave_write(context->state.sound_f, context->state.sound_stereo_flag ? 2 : 1, 16, 0, context->state.sound_frequency) != 0) {
-		log_std(("ERROR: writing file %s\n", context->state.sound_file_buffer));
-		fclose(context->state.sound_f);
-		remove(context->state.sound_file_buffer);
+	if (wave_write(sound->f, sound->stereo_flag ? 2 : 1, 16, 0, sound->frequency) != 0) {
+		log_std(("ERROR: writing file %s\n", sound->file_buffer));
+		fclose(sound->f);
+		remove(sound->file_buffer);
 		return -1;
 	}
 
-	context->state.sound_active_flag = 1;
+	sound->active_flag = 1;
 
 	return 0;
 }
@@ -121,58 +121,65 @@ static adv_error sound_start(struct advance_record_context* context, const char*
  * \param map samples buffer
  * \param mac number of 16 bit samples mono or stereo in little endian format
  */
-static adv_error sound_update(struct advance_record_context* context, const short* map, unsigned mac)
+static adv_error sound_update(struct advance_record_sound_state* sound, const short* map, unsigned mac, unsigned max_time, adv_bool notify)
 {
 	unsigned i;
 
-	if (!context->state.sound_active_flag)
+	if (!sound->active_flag)
 		return -1;
 
-	if (context->state.sound_stopped_flag) {
+	if (sound->stopped_flag) {
 		return 0;
 	}
 
-	if (context->state.sound_sample_counter / context->state.sound_frequency >= context->config.sound_time) {
-		if (!context->state.video_active_flag)
+	if (max_time && sound->sample_counter / sound->frequency >= max_time) {
+		if (notify)
 			advance_global_message(&CONTEXT.global, "Sound recording full");
-		context->state.sound_stopped_flag = 1;
+		sound->stopped_flag = 1;
 		return 0;
 	}
 
-	for (i = 0; i < mac * context->state.sound_sample_size / 2; ++i) {
+	/* RIFF/WAV sizes are 32-bit, including the 36-byte container overhead. */
+	if (mac > (0xffffffffU - 36) / sound->sample_size - sound->sample_counter) {
+		log_std(("Sound recording reached WAV size limit: %s\n", sound->file_buffer));
+		sound->stopped_flag = 1;
+		return 0;
+	}
+
+	for (i = 0; i < mac * sound->sample_size / 2; ++i) {
 		unsigned char p[2];
 		le_uint16_write(p, map[i]);
-		if (fwrite(p, 2, 1, context->state.sound_f) != 1)
+		if (fwrite(p, 2, 1, sound->f) != 1)
 			goto err;
 	}
 
-	context->state.sound_sample_counter += mac;
+	sound->sample_counter += mac;
 
 	return 0;
 err:
-	log_std(("ERROR: writing file %s\n", context->state.sound_file_buffer));
-	sound_cancel(context);
+	log_std(("ERROR: writing file %s\n", sound->file_buffer));
+	sound_cancel(sound);
 	return -1;
 }
 
 /* Save and stop the current file recording */
-static adv_error sound_stop(struct advance_record_context* context, unsigned* time)
+static adv_error sound_stop(struct advance_record_sound_state* sound, unsigned* time)
 {
-	if (!context->state.sound_active_flag)
+	if (!sound->active_flag)
 		return -1;
 
-	context->state.sound_active_flag = 0;
+	sound->active_flag = 0;
 
-	if (wave_write_size(context->state.sound_f, context->state.sound_sample_size * context->state.sound_sample_counter) != 0) {
-		log_std(("ERROR: writing header file %s\n", context->state.sound_file_buffer));
-		fclose(context->state.sound_f);
-		remove(context->state.sound_file_buffer);
+	if (wave_write_size(sound->f, sound->sample_size * sound->sample_counter) != 0) {
+		log_std(("ERROR: writing header file %s\n", sound->file_buffer));
+		fclose(sound->f);
+		remove(sound->file_buffer);
 		return -1;
 	}
 
-	fclose(context->state.sound_f);
+	fclose(sound->f);
 
-	*time = context->state.sound_sample_counter / context->state.sound_frequency;
+	*time = sound->sample_counter / sound->frequency;
 
 	return 0;
 }
@@ -456,10 +463,11 @@ static void advance_record_next(struct advance_record_context* context, const ma
 {
 	unsigned counter = 0;
 
-	snprintf(path_wav, size_wav, "%s/%.8s.wav", context->config.dir_buffer, mame_game_name(game));
-	snprintf(path_mng, size_mng, "%s/%.8s.mng", context->config.dir_buffer, mame_game_name(game));
+	snprintf(path_wav, size_wav, "%s/%s.wav", context->config.dir_buffer, mame_game_name(game));
+	snprintf(path_mng, size_mng, "%s/%s.mng", context->config.dir_buffer, mame_game_name(game));
 
-	if (access(path_wav, F_OK) == 0 || access(path_mng, F_OK) == 0) {
+	/* Reserve the unnumbered WAV for automatic debug recording. */
+	if (context->config.debug_sound || access(path_wav, F_OK) == 0 || access(path_mng, F_OK) == 0) {
 		do {
 			snprintf(path_wav, size_wav, "%s/%.4s%04d.wav", context->config.dir_buffer, mame_game_name(game), counter);
 			snprintf(path_mng, size_mng, "%s/%.4s%04d.mng", context->config.dir_buffer, mame_game_name(game), counter);
@@ -470,14 +478,14 @@ static void advance_record_next(struct advance_record_context* context, const ma
 
 static void advance_record_terminate(struct advance_record_context* context, unsigned* sound_time, unsigned* video_time)
 {
-	if (context->config.sound_flag) {
+	if (context->config.sound_flag && context->state.sound.active_flag) {
 		/* save only if at least 1 second of data is available */
-		if (context->state.sound_sample_counter / context->state.sound_frequency > 1.0) {
-			if (sound_stop(context, sound_time) != 0) {
+		if (context->state.sound.sample_counter / context->state.sound.frequency > 1.0) {
+			if (sound_stop(&context->state.sound, sound_time) != 0) {
 				*sound_time = 0;
 			}
 		} else {
-			sound_cancel(context);
+			sound_cancel(&context->state.sound);
 			*sound_time = 0;
 		}
 	} else {
@@ -508,8 +516,14 @@ void osd_record_start(void)
 	char path_wav[FILE_MAXPATH];
 	char path_mng[FILE_MAXPATH];
 
+	advance_global_message(&CONTEXT.global, "Start recording");
+
+#ifdef USE_SMP
+	pthread_mutex_lock(&context->state.access_mutex);
+#endif
+
 	if (context->config.sound_flag && sound_context->state.rate) {
-		sound_cancel(context); /* ignore error */
+		sound_cancel(&context->state.sound); /* ignore error */
 	}
 
 	if (context->config.video_flag) {
@@ -518,28 +532,28 @@ void osd_record_start(void)
 
 	advance_record_next(context, game, path_wav, FILE_MAXPATH, path_mng, FILE_MAXPATH);
 
-	advance_global_message(&CONTEXT.global, "Start recording");
-
-#ifdef USE_SMP
-	pthread_mutex_lock(&context->state.access_mutex);
-#endif
-
 	log_std(("osd: osd_record_start()\n"));
 
 	if (context->config.sound_flag && sound_context->state.rate) {
-		sound_start(context, path_wav, sound_context->state.rate, sound_context->state.input_mode != SOUND_MODE_MONO);
+		sound_start(&context->state.sound, path_wav, sound_context->state.rate, sound_context->state.input_mode != SOUND_MODE_MONO);
 	}
 
 	if (context->config.video_flag) {
 		unsigned size_x = video_context->state.game_used_size_x;
 		unsigned size_y = video_context->state.game_used_size_y;
+		double mng_fps;
 
 		/* restore the original orientation */
 		if ((video_context->config.blit_orientation & OSD_ORIENTATION_SWAP_XY) != 0) {
 			SWAP(unsigned, size_x, size_y);
 		}
 
-		video_start(context, path_mng, video_context->state.game_fps, size_x, size_y, video_context->config.game_orientation);
+		if (video_context->config.record_speed_flag)
+			mng_fps = video_context->state.game_native_fps;
+		else
+			mng_fps = video_context->state.game_fps;
+
+		video_start(context, path_mng, mng_fps, size_x, size_y, video_context->config.game_orientation);
 	}
 
 #ifdef USE_SMP
@@ -574,7 +588,7 @@ static void advance_snapshot_next(struct advance_record_context* context, const 
 {
 	unsigned counter = 0;
 
-	snprintf(path_png, size, "%s/%.8s.png", context->config.dir_buffer, mame_game_name(game));
+	snprintf(path_png, size, "%s/%s.png", context->config.dir_buffer, mame_game_name(game));
 
 	if (access(path_png, F_OK) == 0) {
 		do {
@@ -612,8 +626,8 @@ void osd_save_snapshot(void)
 
 adv_bool advance_record_sound_is_active(struct advance_record_context* context)
 {
-	return context->state.sound_active_flag
-	       && !context->state.sound_stopped_flag;
+	return (context->state.sound.active_flag && !context->state.sound.stopped_flag)
+	       || (context->config.debug_sound && !context->state.debug_sound_failed && !context->state.debug_sound.stopped_flag);
 }
 
 adv_bool advance_record_video_is_active(struct advance_record_context* context)
@@ -633,7 +647,27 @@ void advance_record_sound_update(struct advance_record_context* context, const s
 	pthread_mutex_lock(&context->state.access_mutex);
 #endif
 
-	sound_update(context, sample_buffer, sample_count);
+	sound_update(&context->state.sound, sample_buffer, sample_count, context->config.sound_time, !context->state.video_active_flag);
+
+	if (context->config.debug_sound && !context->state.debug_sound_failed
+		&& context->state.debug_frame_counter >= context->config.debug_start) {
+		if (!context->state.debug_sound.active_flag) {
+			struct advance_sound_context* sound_context = &CONTEXT.sound;
+			char path_wav[FILE_MAXPATH];
+			snprintf(path_wav, sizeof(path_wav), "%s/%s.wav", context->config.dir_buffer, mame_game_name(CONTEXT.game));
+			if (sound_start(&context->state.debug_sound, path_wav, sound_context->state.rate, sound_context->state.input_mode != SOUND_MODE_MONO) != 0) {
+				context->state.debug_sound_failed = 1;
+				target_err("Error opening debug sound recording '%s'.\n", path_wav);
+			} else {
+				log_std(("Debug sound recording: %s\n", path_wav));
+			}
+		}
+		if (context->state.debug_sound.active_flag
+			&& sound_update(&context->state.debug_sound, sample_buffer, sample_count, 0, 0) != 0) {
+			context->state.debug_sound_failed = 1;
+			target_err("Error writing debug sound recording.\n");
+		}
+	}
 
 #ifdef USE_SMP
 	pthread_mutex_unlock(&context->state.access_mutex);
@@ -666,6 +700,90 @@ void advance_record_snapshot_update(struct advance_record_context* context, cons
 #endif
 }
 
+adv_error advance_record_debug_snapshot_update(struct advance_record_context* context, unsigned frame, adv_bool breakpoint, const void* video_buffer, unsigned video_width, unsigned video_height, unsigned video_bytes_per_pixel, unsigned video_bytes_per_scanline, adv_color_def color_def, adv_color_rgb* palette_map, unsigned palette_max, unsigned orientation)
+{
+	char file[FILE_MAXPATH];
+	adv_fz* f;
+	const mame_game* game = CONTEXT.game;
+	const char* name = game ? mame_game_name(game) : "snap";
+
+#ifdef USE_SMP
+	pthread_mutex_lock(&context->state.access_mutex);
+#endif
+
+	if (breakpoint)
+		snprintf(file, sizeof(file), "%s/%s.break.png", context->config.dir_buffer, name);
+	else
+		snprintf(file, sizeof(file), "%s/%s_%05u.png", context->config.dir_buffer, name, frame);
+
+	f = fzopen(file, "wb");
+	if (!f) {
+		log_std(("ERROR: opening debug snapshot file %s\n", file));
+#ifdef USE_SMP
+		pthread_mutex_unlock(&context->state.access_mutex);
+#endif
+		return -1;
+	}
+
+	if (advance_record_png_write(f, video_buffer, video_width, video_height, video_bytes_per_pixel, video_bytes_per_scanline, color_def, palette_map, palette_max, orientation) != 0) {
+		log_std(("ERROR: writing debug snapshot file %s\n", file));
+		fzclose(f);
+		remove(file);
+#ifdef USE_SMP
+		pthread_mutex_unlock(&context->state.access_mutex);
+#endif
+		return -1;
+	}
+
+	fzclose(f);
+
+#ifdef USE_SMP
+	pthread_mutex_unlock(&context->state.access_mutex);
+#endif
+	return 0;
+}
+
+/* Addresses are hexadecimal; lengths are decimal or prefixed with 0x. */
+static adv_error debug_option_parse(const char* option, const char* text, int* cpu, unsigned* address, unsigned* length)
+{
+	char* end;
+	unsigned long value;
+	*cpu = -1;
+	if (!*text)
+		return 0;
+	if (*text < '0' || *text > '9')
+		goto invalid;
+	errno = 0;
+	value = strtoul(text, &end, 10);
+	if (errno || value >= 16 || *end != ':')
+		goto invalid;
+	*cpu = value;
+	text = end + 1;
+	if (!isxdigit((unsigned char)*text))
+		goto invalid;
+	errno = 0;
+	value = strtoul(text, &end, 16);
+	if (errno || value > 0xffffffffUL)
+		goto invalid;
+	*address = value;
+	if (!length && !*end)
+		return 0;
+	if (!length || *end != ':')
+		goto invalid;
+	text = end + 1;
+	if (*text < '0' || *text > '9')
+		goto invalid;
+	errno = 0;
+	value = strtoul(text, &end, text[0] == '0' && (text[1] == 'x' || text[1] == 'X') ? 16 : 10);
+	if (errno || *end || !value || value > 0xffffffffUL || value - 1 > 0xffffffffUL - *address)
+		goto invalid;
+	*length = value;
+	return 0;
+invalid:
+	target_err("Invalid -%s: expected cpu:hex_address%s.\n", option, length ? ":length" : "");
+	return -1;
+}
+
 adv_error advance_record_config_load(struct advance_record_context* context, adv_conf* cfg_context)
 {
 	sncpy(context->config.dir_buffer, sizeof(context->config.dir_buffer), conf_string_get_default(cfg_context, "dir_snap"));
@@ -674,6 +792,21 @@ adv_error advance_record_config_load(struct advance_record_context* context, adv
 	context->config.video_flag = conf_bool_get_default(cfg_context, "record_video");
 	context->config.sound_flag = conf_bool_get_default(cfg_context, "record_sound");
 	context->config.video_interlace = conf_int_get_default(cfg_context, "record_video_interleave");
+	context->config.debug_snap_step = conf_int_get_default(cfg_context, "debug_snap_step");
+	context->config.debug_exit = conf_int_get_default(cfg_context, "debug_exit");
+	context->config.debug_start = conf_int_get_default(cfg_context, "debug_start");
+	context->config.debug_sound = conf_bool_get_default(cfg_context, "debug_sound");
+	context->config.debug_cpu = conf_int_get_default(cfg_context, "debug_cpu");
+	context->state.debug_frame_counter = 0;
+	context->state.debug_time_start = 0;
+	context->state.debug_time_stop = 0;
+	context->state.debug_break_pending = 0;
+	context->state.debug_break_failed = 0;
+	if (debug_option_parse("debug_watch", conf_string_get_default(cfg_context, "debug_watch"),
+		&context->config.debug_watch_cpu, &context->config.debug_watch_address, &context->config.debug_watch_length) != 0
+		|| debug_option_parse("debug_break", conf_string_get_default(cfg_context, "debug_break"),
+		&context->config.debug_break_cpu, &context->config.debug_break_address, 0) != 0)
+		return -1;
 
 	/* override */
 	if (context->config.sound_time == 0) {
@@ -693,6 +826,13 @@ adv_error advance_record_init(struct advance_record_context* context, adv_conf* 
 	conf_bool_register_default(cfg_context, "record_sound", 1);
 	conf_bool_register_default(cfg_context, "record_video", 1);
 	conf_int_register_limit_default(cfg_context, "record_video_interleave", 1, 30, 2);
+	conf_int_register_limit_default(cfg_context, "debug_snap_step", 0, 1000000, 0);
+	conf_int_register_limit_default(cfg_context, "debug_exit", 0, 1000000, 0);
+	conf_int_register_limit_default(cfg_context, "debug_start", 0, 1000000, 0);
+	conf_string_register_default(cfg_context, "debug_watch", "");
+	conf_string_register_default(cfg_context, "debug_break", "");
+	conf_bool_register_default(cfg_context, "debug_sound", 0);
+	conf_int_register_limit_default(cfg_context, "debug_cpu", -2, 16, -2);
 
 #ifdef USE_SMP
 	if (pthread_mutex_init(&context->state.access_mutex, NULL) != 0)
@@ -704,7 +844,13 @@ adv_error advance_record_init(struct advance_record_context* context, adv_conf* 
 
 void advance_record_done(struct advance_record_context* context)
 {
-	sound_cancel(context);
+	/* Debug captures are kept even when shorter than the manual clip minimum. */
+	if (context->state.debug_sound.active_flag) {
+		unsigned sound_time;
+		if (sound_stop(&context->state.debug_sound, &sound_time) != 0)
+			target_err("Error finalizing debug sound recording.\n");
+	}
+	sound_cancel(&context->state.sound);
 	video_cancel(context);
 
 #ifdef USE_SMP

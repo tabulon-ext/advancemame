@@ -18,8 +18,13 @@ endif
 endif
 
 # Binaries names
+ifeq ($(CONF_DEBUGGER),yes)
+BINARYTAG = $(CONF_HOST)-$(CONF_ARCH)-debugger
+BINARYDIR = $(CONF_HOST)/$(CONF_ARCH)-debugger
+else
 BINARYTAG = $(CONF_HOST)-$(CONF_ARCH)
 BINARYDIR = $(CONF_HOST)/$(CONF_ARCH)
+endif
 BINARYBUILDDIR = $(CONF_BUILD)
 
 #############################################################################
@@ -94,6 +99,9 @@ include $(srcdir)/advance/line.mak
 endif
 ifneq ($(wildcard $(srcdir)/advance/d2.mak),)
 include $(srcdir)/advance/d2.mak
+endif
+ifneq ($(wildcard $(srcdir)/advance/bare.mak),)
+include $(srcdir)/advance/bare.mak
 endif
 
 #############################################################################

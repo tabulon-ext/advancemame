@@ -592,6 +592,9 @@ char* osd_basename(char* filename)
 
 	log_std(("osd: osd_basename(filename:%s)\n", filename));
 
+	if (!filename)
+		return 0;
+
 	base = strrchr(filename, file_dir_slash());
 	if (base)
 		++base;
@@ -739,10 +742,6 @@ adv_error advance_fileio_init(struct advance_fileio_context* context, adv_conf* 
 
 	context->state.diff_handle = 0;
 
-#ifdef MESS
-	conf_string_register_default(cfg_context, "dir_crc", file_config_dir_singledir("crc"));
-#endif
-
 	return 0;
 }
 
@@ -825,15 +824,6 @@ adv_error advance_fileio_config_load(struct advance_fileio_context* context, adv
 			path_allocate(&i->dir_map, &i->dir_mac, file_config_dir_singlefile());
 		}
 	}
-
-#ifdef MESS
-	{
-		const char* s = conf_string_get_default(cfg_context, "dir_crc");
-		const char* a = file_config_list(s, file_config_dir_singledir, 0);
-		log_std(("advance:fileio: %s %s\n", "dir_crc", a));
-		sncpy(option->crc_dir_buffer, sizeof(option->crc_dir_buffer), a);
-	}
-#endif
 
 	return 0;
 }

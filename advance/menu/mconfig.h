@@ -36,7 +36,6 @@
 #define COMBINE_NONE 0
 #define COMBINE_SCALEX 6
 #define COMBINE_SCALEK 7
-#define COMBINE_HQ 8
 #define COMBINE_XBR 9
 
 enum clip_mode_t {
@@ -273,6 +272,7 @@ class config_state {
 	bool load_game(const std::string& name, const std::string& group, const std::string& type, const std::string& time, const std::string& session, const std::string& desc);
 	bool load_iterator_game(adv_conf* config_context, const std::string& tag);
 	bool load_iterator_import(adv_conf* config_context, const std::string & tag, void (config_state::*set)(const game&, const std::string&), bool opt_verbose);
+	bool load_iterator_rename_import(adv_conf* config_context, const std::string& tag, bool opt_verbose);
 	bool load_iterator_script(adv_conf* config_context, const std::string& tag);
 
 	void import_desc(const game& g, const std::string& text);
@@ -414,6 +414,7 @@ public:
 	restore_t restore; ///< Configuration restore mode.
 
 	bool quiet; ///< Quiet mode.
+	bool sync; ///< Filesystem sync.
 
 	// internal state
 	unsigned mode_mask; ///< Mask of available modes.
@@ -437,6 +438,7 @@ public:
 	unsigned ui_top; ///< User interface top border
 	unsigned ui_bottom; ///< User interface bottom border
 	bool ui_autocalib; ///< Auto calibration
+	std::string ui_autocalib_reset; ///< Command for resetting autocalibration
 	bool ui_outline; ///< User interface outline around backdrops
 	bool ui_top_name; ///< Put the title over the backdrop
 	bool ui_top_bar; ///< User interface need top bar
@@ -481,10 +483,12 @@ class config_import {
 	void import_catlist(game_set & gar, config_state & config, void (config_state::*set)(const game&, const std::string& text));
 	void import_mac(game_set & gar, config_state & config, void (config_state::*set)(const game&, const std::string& text));
 	void import_nms(game_set & gar, config_state & config, void (config_state::*set)(const game&, const std::string& text));
+	void import_dat(game_set & gar);
 public:
 	config_import(const std::string Atype, const std::string Aemulator, const std::string Afile, const std::string Asection);
 
 	void import(game_set & gar, config_state & config, void (config_state::*set)(const game&, const std::string& text));
+	void import_rename(game_set & gar);
 };
 
 #endif

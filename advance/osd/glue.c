@@ -90,11 +90,6 @@ struct advance_glue_context {
 	const short* sound_current_buffer; /**< Last buffer of samples to play. */
 	unsigned sound_current_count; /**< Number of samples in the last buffer. */
 
-#ifdef MESS
-	char crc_file_buffer[MAME_MAXPATH]; /**< Storage for the the crcfile MESS pointer. */
-	char parent_crc_file_buffer[MAME_MAXPATH]; /**< Storage for the the pcrcfile MESS pointer. */
-#endif
-
 	char resolution_buffer[32]; /**< Buffer used by mame_resolution(). */
 	char resolutionclock_buffer[32]; /**< Buffer used by mame_resolutionclock(). */
 	char software_buffer[256]; /**< Buffer for software name. */
@@ -109,11 +104,16 @@ static struct advance_glue_context GLUE;
 
 /* MAME internal variables */
 extern char* cheatfile;
-extern const char *db_filename;
-#ifdef MESS
-const char* crcfile;
-const char* pcrcfile;
-#endif
+extern const char* db_filename;
+
+/**
+ * Check whether a driver can be launched before inspecting its hardware.
+ */
+adv_bool mame_game_runnable(const mame_game* game)
+{
+	const game_driver* driver = (const game_driver*)game;
+	return (driver->flags & GAME_RESOURCE_FLAGS) == 0;
+}
 
 /**
  * Check if the game is working perfectly.
@@ -122,7 +122,7 @@ adv_bool mame_game_working(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
 
-	unsigned mask = GAME_NOT_WORKING
+	unsigned mask = GAME_RESOURCE_FLAGS | GAME_NOT_WORKING
 		| GAME_UNEMULATED_PROTECTION
 		| GAME_WRONG_COLORS
 		| GAME_NO_SOUND
@@ -139,6 +139,8 @@ adv_bool mame_game_working(const mame_game* game)
 const char* mame_game_resolution(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return "";
 	machine_config machine;
 	expand_machine_driver(driver->drv, &machine);
 	if ((machine.video_attributes & VIDEO_TYPE_VECTOR) == 0) {
@@ -161,6 +163,8 @@ const char* mame_game_resolution(const mame_game* game)
 const char* mame_game_resolutionclock(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return "";
 	machine_config machine;
 	expand_machine_driver(driver->drv, &machine);
 	if ((machine.video_attributes & VIDEO_TYPE_VECTOR) == 0) {
@@ -185,6 +189,8 @@ const char* mame_game_resolutionclock(const mame_game* game)
 double mame_game_fps(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return 0;
 	machine_config machine;
 	expand_machine_driver(driver->drv, &machine);
 	return machine.frames_per_second;
@@ -389,6 +395,8 @@ const char* mame_game_year(const mame_game* game)
 unsigned mame_game_players(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return 0;
 	input_port_entry* input;
 	int nplayer;
 
@@ -412,12 +420,75 @@ unsigned mame_game_players(const mame_game* game)
 }
 
 /**
+ * Return the game number of buttons.
+ * \return Number of buttons of the game.
+ */
+unsigned mame_game_buttons(const mame_game* game)
+{
+	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return 0;
+	input_port_entry* input;
+	int nbutton;
+
+	/* memory management for input_port_allocate */
+	begin_resource_tracking();
+
+	/* create the input port list */
+	input = input_port_allocate(driver->construct_ipt, NULL);
+
+	nbutton = 0;
+	while (input->type != IPT_END) {
+		switch (input->type) {
+		case IPT_BUTTON1 :
+			if (nbutton < 1) nbutton = 1;
+			break;
+		case IPT_BUTTON2 :
+			if (nbutton < 2) nbutton = 2;
+			break;
+		case IPT_BUTTON3 :
+			if (nbutton < 3) nbutton = 3;
+			break;
+		case IPT_BUTTON4 :
+			if (nbutton < 4) nbutton = 4;
+			break;
+		case IPT_BUTTON5 :
+			if (nbutton < 5) nbutton = 5;
+			break;
+		case IPT_BUTTON6 :
+			if (nbutton < 6) nbutton = 6;
+			break;
+		case IPT_BUTTON7 :
+			if (nbutton < 7) nbutton = 7;
+			break;
+		case IPT_BUTTON8 :
+			if (nbutton < 8) nbutton = 8;
+			break;
+		case IPT_BUTTON9 :
+			if (nbutton < 9) nbutton = 9;
+			break;
+		case IPT_BUTTON10 :
+			if (nbutton < 10) nbutton = 10;
+			break;
+		}
+		++input;
+	}
+
+	/* memory management for input_port_allocate */
+	end_resource_tracking();
+
+	return nbutton;
+}
+
+/**
  * Return the game control string.
  * \return A string like "joy4way" or 0 if unknown.
  */
 const char* mame_game_control(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return "";
 	const input_port_entry* input;
 	const char* control = 0;
 
@@ -429,10 +500,10 @@ const char* mame_game_control(const mame_game* game)
 
 	while (input->type != IPT_END) {
 		switch (input->type) {
-		case IPT_JOYSTICK_UP:
-		case IPT_JOYSTICK_DOWN:
-		case IPT_JOYSTICK_LEFT:
-		case IPT_JOYSTICK_RIGHT:
+		case IPT_JOYSTICK_UP :
+		case IPT_JOYSTICK_DOWN :
+		case IPT_JOYSTICK_LEFT :
+		case IPT_JOYSTICK_RIGHT :
 			if (!control) {
 				if (input->four_way)
 					control = "joy4way";
@@ -440,14 +511,14 @@ const char* mame_game_control(const mame_game* game)
 					control = "joy8way";
 			}
 			break;
-		case IPT_JOYSTICKRIGHT_UP:
-		case IPT_JOYSTICKRIGHT_DOWN:
-		case IPT_JOYSTICKRIGHT_LEFT:
-		case IPT_JOYSTICKRIGHT_RIGHT:
-		case IPT_JOYSTICKLEFT_UP:
-		case IPT_JOYSTICKLEFT_DOWN:
-		case IPT_JOYSTICKLEFT_LEFT:
-		case IPT_JOYSTICKLEFT_RIGHT:
+		case IPT_JOYSTICKRIGHT_UP :
+		case IPT_JOYSTICKRIGHT_DOWN :
+		case IPT_JOYSTICKRIGHT_LEFT :
+		case IPT_JOYSTICKRIGHT_RIGHT :
+		case IPT_JOYSTICKLEFT_UP :
+		case IPT_JOYSTICKLEFT_DOWN :
+		case IPT_JOYSTICKLEFT_LEFT :
+		case IPT_JOYSTICKLEFT_RIGHT :
 			if (!control) {
 				if (input->four_way)
 					control = "doublejoy4way";
@@ -455,39 +526,39 @@ const char* mame_game_control(const mame_game* game)
 					control = "doublejoy8way";
 			}
 			break;
-		case IPT_PADDLE:
-		case IPT_PADDLE_V:
+		case IPT_PADDLE :
+		case IPT_PADDLE_V :
 			if (!control) {
 				control = "paddle";
 			}
 			break;
-		case IPT_DIAL:
-		case IPT_DIAL_V:
+		case IPT_DIAL :
+		case IPT_DIAL_V :
 			if (!control) {
 				control = "dial";
 			}
 			break;
-		case IPT_TRACKBALL_X:
-		case IPT_TRACKBALL_Y:
+		case IPT_TRACKBALL_X :
+		case IPT_TRACKBALL_Y :
 			if (!control) {
 				control = "trackball";
 			}
 			break;
-		case IPT_AD_STICK_X:
-		case IPT_AD_STICK_Y:
-		case IPT_AD_STICK_Z:
+		case IPT_AD_STICK_X :
+		case IPT_AD_STICK_Y :
+		case IPT_AD_STICK_Z :
 			if (!control) {
 				control = "stick";
 			}
 			break;
-		case IPT_LIGHTGUN_X:
-		case IPT_LIGHTGUN_Y:
+		case IPT_LIGHTGUN_X :
+		case IPT_LIGHTGUN_Y :
 			if (!control) {
 				control = "lightgun";
 			}
 			break;
-		case IPT_MOUSE_X:
-		case IPT_MOUSE_Y:
+		case IPT_MOUSE_X :
+		case IPT_MOUSE_Y :
 			if (!control) {
 				control = "mouse";
 			}
@@ -516,6 +587,13 @@ const mame_game* mame_game_at(unsigned i)
 /**
  * Print the information database in XML format.
  */
+int mame_validate(void)
+{
+	cpuintrf_init();
+	sndintrf_init();
+	return mame_validitychecks(-1);
+}
+
 void mame_print_xml(FILE* out, int bare)
 {
 	cpuintrf_init();
@@ -529,6 +607,8 @@ void mame_print_xml(FILE* out, int bare)
 adv_bool mame_is_game_vector(const mame_game* game)
 {
 	const game_driver* driver = (const game_driver*)game;
+	if (driver->flags & GAME_RESOURCE_FLAGS)
+		return 0;
 	machine_config machine;
 	expand_machine_driver(driver->drv, &machine);
 	return (machine.video_attributes & VIDEO_TYPE_VECTOR) != 0;
@@ -596,6 +676,122 @@ const struct mame_game* mame_playback_look(const char* file)
 	}
 }
 
+#ifdef MAME_DEBUG
+int debug_cpu_active = -2;
+int debug_break_active;
+int debug_watch_active;
+static FILE* debug_cpu_trace_file;
+static FILE* debug_watch_file;
+static FILE* debug_break_file;
+static adv_bool debug_capture_failed;
+static adv_bool debug_watch_suppressed;
+
+static void debug_capture_error(const char* operation)
+{
+	target_err("Error %s debug capture file.\n", operation);
+	debug_capture_failed = 1;
+	debug_cpu_active = -2;
+	debug_watch_active = debug_break_active = 0;
+	CONTEXT.input.state.input_forced_exit_flag = 1;
+}
+
+static FILE* debug_capture_open(const char* suffix)
+{
+	char path[FILE_MAXPATH];
+	FILE* f;
+	snprintf(path, sizeof(path), "%s/%s.%s", CONTEXT.record.config.dir_buffer, mame_game_name(CONTEXT.game), suffix);
+	f = fopen(path, "w");
+	if (!f)
+		target_err("Unable to open debug capture file '%s': %s.\n", path, strerror(errno));
+	return f;
+}
+
+static void debug_capture_close(FILE** f)
+{
+	if (*f) {
+		if (fclose(*f) != 0)
+			debug_capture_error("closing");
+		*f = 0;
+	}
+}
+
+/* Used both by instruction traces and by one-shot breakpoint reports. */
+static void debug_cpu_dump(FILE* f, int cpu, adv_bool prefix)
+{
+	char dasm[128];
+	const INT8* layout;
+	unsigned pc = activecpu_get_pc();
+	unsigned width = (activecpu_addrbus_width(ADDRESS_SPACE_PROGRAM) + 3) / 4;
+	int i;
+
+	/* Disassemblers may use memory accessors. Do not log their reads as CPU traffic. */
+	debug_watch_suppressed = 1;
+	activecpu_dasm(dasm, pc);
+	if (prefix)
+		fprintf(f, "[CPU%d] ", cpu);
+	fprintf(f, "%0*X: %-25s | ", width, pc, dasm);
+	layout = (const INT8*)activecpu_register_layout();
+	if (layout) {
+		for (i = 0; i < 32 && layout[i]; ++i) {
+			const char* reg;
+			if (layout[i] == -1)
+				continue;
+			reg = activecpu_reg_string(layout[i]);
+			if (reg)
+				fprintf(f, "%s ", *reg == '~' ? reg + 1 : reg);
+		}
+	}
+	debug_watch_suppressed = 0;
+	fprintf(f, "\n");
+	if (fflush(f) != 0)
+		debug_capture_error("writing");
+}
+
+void debug_cpu_hook(void)
+{
+	struct advance_record_context* context = &CONTEXT.record;
+	int cpu = cpu_getactivecpu();
+	if (cpu < 0 || context->state.debug_frame_counter < context->config.debug_start)
+		return;
+
+	if (debug_cpu_active == -1 || debug_cpu_active == cpu)
+		debug_cpu_dump(debug_cpu_trace_file, cpu, debug_cpu_active == -1);
+
+	if (debug_break_active && cpu == context->config.debug_break_cpu
+		&& activecpu_get_pc() == context->config.debug_break_address) {
+		int i;
+		debug_break_active = 0;
+		fprintf(debug_break_file, "Frame %u\n", context->state.debug_frame_counter);
+		debug_cpu_dump(debug_break_file, cpu, 1);
+		if (debug_capture_failed)
+			return;
+		context->state.debug_break_pending = 1;
+		/* Leave timers/video running so even a breakpoint at reset gets a PNG.
+		   CPU cores can finish the instruction containing this hook. */
+		for (i = 0; i < cpu_gettotalcpu(); ++i)
+			cpunum_suspend(i, SUSPEND_REASON_DISABLE, 1);
+	}
+}
+
+void debug_watch_hook(int space, offs_t address, unsigned size, UINT64 data, int write)
+{
+	struct advance_record_context* context = &CONTEXT.record;
+	UINT64 start = context->config.debug_watch_address;
+	UINT64 end = start + context->config.debug_watch_length;
+	int cpu = cpu_getactivecpu();
+	if (space != ADDRESS_SPACE_PROGRAM || debug_watch_suppressed
+		|| cpu != context->config.debug_watch_cpu || cpu != cpu_getexecutingcpu()
+		|| context->state.debug_frame_counter < context->config.debug_start
+		|| (UINT64)address >= end || (UINT64)address + size <= start)
+		return;
+	fprintf(debug_watch_file, "Frame %u [CPU%d] PC=%08X %c%u %08X = %0*llX\n",
+		context->state.debug_frame_counter, cpu, activecpu_get_previouspc(),
+		write ? 'W' : 'R', size * 8, address, size * 2, (unsigned long long)data);
+	if (fflush(debug_watch_file) != 0)
+		debug_capture_error("writing");
+}
+#endif
+
 /**
  * Run a game
  */
@@ -604,8 +800,39 @@ int mame_game_run(struct advance_context* context, const struct mame_option* adv
 	int r;
 	int game_index;
 
+	/* resources have no runnable hardware configuration */
+	if (!advance->game || !mame_game_runnable(advance->game)) {
+		target_err("The selected entry is a non-runnable ROM resource.\n");
+		return -1;
+	}
+
 	/* store the game pointer */
 	context->game = advance->game;
+
+#ifdef MAME_DEBUG
+	{
+		machine_config machine;
+		int count;
+		expand_machine_driver(((const game_driver*)context->game)->drv, &machine);
+		for (count = 0; count < MAX_CPU && machine.cpu[count].cpu_type != CPU_DUMMY; ++count) {
+		}
+		if (context->record.config.debug_cpu >= count
+			|| context->record.config.debug_watch_cpu >= count
+			|| context->record.config.debug_break_cpu >= count) {
+			target_err("Debug CPU index out of range: this game has %d CPUs.\n", count);
+			return -1;
+		}
+	}
+	debug_cpu_active = context->record.config.debug_cpu;
+	debug_watch_active = context->record.config.debug_watch_cpu >= 0;
+	debug_break_active = context->record.config.debug_break_cpu >= 0;
+#else
+	if (context->record.config.debug_cpu >= -1 || context->record.config.debug_watch_cpu >= 0
+		|| context->record.config.debug_break_cpu >= 0) {
+		target_err("-debug_cpu, -debug_watch and -debug_break require debugger support (make CONF_DEBUGGER=yes).\n");
+		return -1;
+	}
+#endif
 
 	options.record = 0;
 	options.playback = 0;
@@ -613,6 +840,12 @@ int mame_game_run(struct advance_context* context, const struct mame_option* adv
 	options.logfile = 0; /* use internal logging */
 	options.mame_debug = advance->debug_flag;
 	options.cheat = advance->cheat_flag;
+	options.jit = context->global.config.jit_flag;
+	options.slowdown = context->global.config.slowdown_flag;
+#ifdef MAME_DEBUG
+	if (options.mame_debug || debug_cpu_active >= -1 || debug_break_active)
+		options.jit = 0;
+#endif
 	options.gui_host = 1; /* this prevents text mode messages that may stop the execution */
 	options.skip_disclaimer = context->global.config.quiet_flag;
 	options.skip_gameinfo = context->global.config.quiet_flag;
@@ -647,6 +880,7 @@ int mame_game_run(struct advance_context* context, const struct mame_option* adv
 	if (options.artwork_res == 0)
 		options.artwork_res = 2; /* auto is 2 */
 	options.artwork_crop = advance->artwork_crop_flag;
+	options.artwork_view = advance->artwork_view_buffer;
 	if (advance->savegame_file_buffer[0] != 0)
 		options.savegame = advance->savegame_file_buffer;
 	else
@@ -749,29 +983,6 @@ int mame_game_run(struct advance_context* context, const struct mame_option* adv
 	cheatfile = (char*)advance->cheat_file_buffer;
 	db_filename = advance->hiscore_file_buffer;
 
-#ifdef MESS
-	{
-		const game_driver* driver = (const game_driver*)context->game;
-		const game_driver* clone_of = driver_get_clone(driver);
-
-		snprintf(GLUE.crc_file_buffer, sizeof(GLUE.crc_file_buffer), "%s%c%s.crc", advance->crc_dir_buffer, file_dir_slash(), driver->name);
-		crcfile = GLUE.crc_file_buffer;
-
-		log_std(("glue: file_crc %s\n", crcfile));
-
-		if (clone_of
-			&& clone_of->name
-			&& (clone_of->flags & NOT_A_DRIVER) == 0) {
-			snprintf(GLUE.parent_crc_file_buffer, sizeof(GLUE.parent_crc_file_buffer), "%s%c%s.crc", advance->crc_dir_buffer, file_dir_slash(), clone_of->name);
-		} else {
-			GLUE.parent_crc_file_buffer[0] = 0;
-		}
-		pcrcfile = GLUE.parent_crc_file_buffer;
-
-		log_std(("glue: parent_file_crc %s\n", pcrcfile));
-	}
-#endif
-
 	for (game_index = 0; drivers[game_index]; ++game_index)
 		if ((const game_driver*)context->game == drivers[game_index])
 			break;
@@ -779,12 +990,51 @@ int mame_game_run(struct advance_context* context, const struct mame_option* adv
 	if (!drivers[game_index])
 		return -1;
 
-	GLUE.sound_speed = context->video.config.fps_speed_factor;
+	if (context->video.config.record_speed_flag)
+		GLUE.sound_speed = 1.0;
+	else
+		GLUE.sound_speed = context->video.config.fps_speed_factor;
 	GLUE.sound_fps = context->video.config.fps_fixed;
 
 	hardware_script_info(mame_game_description(context->game), mame_game_manufacturer(context->game), mame_game_year(context->game), "Loading");
 
+#ifdef MAME_DEBUG
+	debug_capture_failed = 0;
+	debug_watch_suppressed = 0;
+	if (debug_cpu_active >= -1 && !(debug_cpu_trace_file = debug_capture_open("cpu")))
+		goto trace_open_error;
+	if (debug_watch_active && !(debug_watch_file = debug_capture_open("watch")))
+		goto trace_open_error;
+	if (debug_break_active) {
+		char path[FILE_MAXPATH];
+		if (!(debug_break_file = debug_capture_open("break")))
+			goto trace_open_error;
+		/* A missed breakpoint must not leave a screenshot from a previous run. */
+		snprintf(path, sizeof(path), "%s/%s.break.png", context->record.config.dir_buffer, mame_game_name(context->game));
+		if (unlink(path) != 0 && errno != ENOENT) {
+			target_err("Unable to remove old breakpoint screenshot '%s': %s.\n", path, strerror(errno));
+			goto trace_open_error;
+		}
+	}
+#endif
+
 	r = run_game(game_index);
+
+#ifdef MAME_DEBUG
+	goto trace_done;
+trace_open_error:
+	r = -1;
+trace_done:
+	debug_cpu_active = -2;
+	debug_watch_active = debug_break_active = 0;
+	debug_capture_close(&debug_cpu_trace_file);
+	debug_capture_close(&debug_watch_file);
+	debug_capture_close(&debug_break_file);
+	if (context->record.state.debug_break_failed)
+		target_err("Error writing breakpoint screenshot.\n");
+	if (debug_capture_failed || context->record.state.debug_break_failed)
+		r = -1;
+#endif
 
 	if (options.bios) {
 		free(options.bios);
@@ -860,35 +1110,47 @@ int mame_game_run(struct advance_context* context, const struct mame_option* adv
 #define K(name) \
 	{ "key_" name, "Key " name, { name } },
 
-#define KR1(name, re1) \
+#define O(name) \
+	{ "other_" name, "Other " name, { name } },
+
+#define O1(name, re1) \
+	{ "other_" name, "Other " name, { re1 } },
+
+#define O2(name, re1, re2) \
+	{ "other_" name, "Other " name, { re1, re2 } },
+
+#define O3(name, re1, re2, re3) \
+	{ "other_" name, "Other " name, { re1, re2, re3 } },
+
+#define K1(name, re1) \
 	{ "key_" name, "Key " name, { re1 } },
 
-#define KR2(name, re1, re2) \
+#define K2(name, re1, re2) \
 	{ "key_" name, "Key " name, { re1, re2 } },
 
-#define KR3(name, re1, re2, re3) \
+#define K3(name, re1, re2, re3) \
 	{ "key_" name, "Key " name, { re1, re2, re3 } },
 
-#define KR4(name, re1, re2, re3, re4) \
+#define K4(name, re1, re2, re3, re4) \
 	{ "key_" name, "Key " name, { re1, re2, re3, re4 } },
 
-#define KR5(name, re1, re2, re3, re4, re5) \
+#define K5(name, re1, re2, re3, re4, re5) \
 	{ "key_" name, "Key " name, { re1, re2, re3, re4, re5 } },
 
-#ifdef MESS
-struct glue_keyboard_name {
+struct glue_port_name {
 	const char* name;
 	char desc[64];
 	const char* glob[8];
 };
 
+#ifdef MESS
 /**
  * Keyboard name definitions.
  * This list defines some common names used in keyboards.
  * Note that the order of definition is relevant on the recognition of
  * the key from it's free form description on the MESS driver port list.
  */
-static struct glue_keyboard_name GLUE_KEYBOARD_STD[] = {
+static struct glue_port_name GLUE_KEYBOARD_STD[] = {
 
 	K("q")
 	K("w")
@@ -917,42 +1179,42 @@ static struct glue_keyboard_name GLUE_KEYBOARD_STD[] = {
 	K("n")
 	K("m")
 
-	KR4("pad_0", "keypad*0", "0*keypad?", "0*kp?", "kp*0")
-	KR4("pad_1", "keypad*1", "1*keypad?", "1*kp?", "kp*1")
-	KR4("pad_2", "keypad*2", "2*keypad?", "2*kp?", "kp*2")
-	KR4("pad_3", "keypad*3", "3*keypad?", "3*kp?", "kp*3")
-	KR4("pad_4", "keypad*4", "4*keypad?", "4*kp?", "kp*4")
-	KR4("pad_5", "keypad*5", "5*keypad?", "5*kp?", "kp*5")
-	KR4("pad_6", "keypad*6", "6*keypad?", "6*kp?", "kp*6")
-	KR4("pad_7", "keypad*7", "7*keypad?", "7*kp?", "kp*7")
-	KR4("pad_8", "keypad*8", "8*keypad?", "8*kp?", "kp*8")
-	KR4("pad_9", "keypad*9", "9*keypad?", "9*kp?", "kp*9")
-	KR4("pad_enter", "keypad*enter", "enter*keypad?", "enter*kp?", "kp*enter")
-	KR4("pad_minus", "keypad*-", "-*keypad?", "-*kp?", "kp*-")
-	KR4("pad_plus", "keypad*+", "+*keypad?", "+*kp?", "kp*+")
-	KR4("pad_slash", "keypad*/", "/*keypad?", "/*kp?", "kp*/")
-	KR4("pad_colon", "keypad*.", ".*keypad?", ".*kp?", "kp*.")
-	KR4("pad_diesis", "keypad*#", "#*keypad?", "#*kp?", "kp*#")
-	KR4("pad_asterisk", "keypad*\\*", "\\**keypad?", "\\**kp?", "kp*\\*")
+	K4("pad_0", "keypad*0", "0*keypad?", "0*kp?", "kp*0")
+	K4("pad_1", "keypad*1", "1*keypad?", "1*kp?", "kp*1")
+	K4("pad_2", "keypad*2", "2*keypad?", "2*kp?", "kp*2")
+	K4("pad_3", "keypad*3", "3*keypad?", "3*kp?", "kp*3")
+	K4("pad_4", "keypad*4", "4*keypad?", "4*kp?", "kp*4")
+	K4("pad_5", "keypad*5", "5*keypad?", "5*kp?", "kp*5")
+	K4("pad_6", "keypad*6", "6*keypad?", "6*kp?", "kp*6")
+	K4("pad_7", "keypad*7", "7*keypad?", "7*kp?", "kp*7")
+	K4("pad_8", "keypad*8", "8*keypad?", "8*kp?", "kp*8")
+	K4("pad_9", "keypad*9", "9*keypad?", "9*kp?", "kp*9")
+	K4("pad_enter", "keypad*enter", "enter*keypad?", "enter*kp?", "kp*enter")
+	K4("pad_minus", "keypad*-", "-*keypad?", "-*kp?", "kp*-")
+	K4("pad_plus", "keypad*+", "+*keypad?", "+*kp?", "kp*+")
+	K4("pad_slash", "keypad*/", "/*keypad?", "/*kp?", "kp*/")
+	K4("pad_colon", "keypad*.", ".*keypad?", ".*kp?", "kp*.")
+	K4("pad_diesis", "keypad*#", "#*keypad?", "#*kp?", "kp*#")
+	K4("pad_asterisk", "keypad*\\*", "\\**keypad?", "\\**kp?", "kp*\\*")
 
-	KR1("0", "0")
-	KR1("1", "1")
-	KR1("2", "2")
-	KR1("3", "3")
-	KR1("4", "4")
-	KR1("5", "5")
-	KR1("6", "6")
-	KR1("7", "7")
-	KR1("8", "8")
-	KR1("9", "9")
+	K1("0", "0")
+	K1("1", "1")
+	K1("2", "2")
+	K1("3", "3")
+	K1("4", "4")
+	K1("5", "5")
+	K1("6", "6")
+	K1("7", "7")
+	K1("8", "8")
+	K1("9", "9")
 
-	KR2("esc", "esc", "escape")
-	KR2("enter", "enter", "return")
-	KR2("backspace", "back*space", "clr")
+	K2("esc", "esc", "escape")
+	K2("enter", "enter", "return")
+	K2("backspace", "back*space", "clr")
 	K("tab")
-	KR2("space", "space", "?space?")
-	KR2("ins", "ins", "insert")
-	KR2("del", "del", "delete")
+	K2("space", "space", "?space?")
+	K2("ins", "ins", "insert")
+	K2("del", "del", "delete")
 	K("home")
 	K("end")
 	K("fctn")
@@ -963,7 +1225,7 @@ static struct glue_keyboard_name GLUE_KEYBOARD_STD[] = {
 	K("hold")
 	K("rew")
 	K("record")
-	KR2("break", "break", "brk")
+	K2("break", "break", "brk")
 	K("graph")
 	K("pause")
 	K("menu")
@@ -980,48 +1242,48 @@ static struct glue_keyboard_name GLUE_KEYBOARD_STD[] = {
 	K("help")
 	K("back")
 	K("forward")
-	KR2("capslock", "caps*lock", "shift*lock")
-	KR1("scrlock", "scroll*lock")
-	KR1("numlock", "num*lock")
+	K2("capslock", "caps*lock", "shift*lock")
+	K1("scrlock", "scroll*lock")
+	K1("numlock", "num*lock")
 	K("quickload")
-	KR2("pgup", "pgup", "page*up")
-	KR2("pgdn", "pgdn", "page*down")
+	K2("pgup", "pgup", "page*up")
+	K2("pgdn", "pgdn", "page*down")
 
-	KR2("backquote", "backquote", "`")
-	KR2("minus", "minus", "-")
-	KR2("plus", "plus", "+")
-	KR2("asterisk", "asterisk", "\\*")
-	KR2("equals", "equals", "=")
-	KR2("openbrace", "openbrace", "(")
-	KR2("closebrace", "closebrace", ")")
-	KR2("semicolon", "semicolon", ";")
-	KR2("quote", "quote", "'")
-	KR2("backslash", "backslash", "\\\\")
-	KR2("less", "less", "<")
-	KR2("comma", "comma", ",")
-	KR2("period", "period", ".")
-	KR2("slash", "slash", "/")
-	KR2("colon", "colon", ":")
-	KR2("pound", "pound", "£")
-	KR2("doublequote", "doublequote", "\"")
-	KR2("diesis", "diessi", "#")
+	K2("backquote", "backquote", "`")
+	K2("minus", "minus", "-")
+	K2("plus", "plus", "+")
+	K2("asterisk", "asterisk", "\\*")
+	K2("equals", "equals", "=")
+	K2("openbrace", "openbrace", "(")
+	K2("closebrace", "closebrace", ")")
+	K2("semicolon", "semicolon", ";")
+	K2("quote", "quote", "'")
+	K2("backslash", "backslash", "\\\\")
+	K2("less", "less", "<")
+	K2("comma", "comma", ",")
+	K2("period", "period", ".")
+	K2("slash", "slash", "/")
+	K2("colon", "colon", ":")
+	K2("pound", "pound", "£")
+	K2("doublequote", "doublequote", "\"")
+	K2("diesis", "diessi", "#")
 
-	KR3("lshift", "lshift", "left?shift", "shift?left")
-	KR3("rshift", "rshift", "right?shift", "shift?right")
-	KR4("lctrl", "lctrl", "lcontrol", "left?ctrl", "ctrl?left")
-	KR4("rctrl", "rctrl", "rcontrol", "right?ctrl", "ctrl?right")
-	KR3("lalt", "lalt", "left?alt", "alt?left")
-	KR3("ralt", "ralt", "right?alt", "alt?right")
-	KR2("ctrl", "ctrl", "control")
+	K3("lshift", "lshift", "left?shift", "shift?left")
+	K3("rshift", "rshift", "right?shift", "shift?right")
+	K4("lctrl", "lctrl", "lcontrol", "left?ctrl", "ctrl?left")
+	K4("rctrl", "rctrl", "rcontrol", "right?ctrl", "ctrl?right")
+	K3("lalt", "lalt", "left?alt", "alt?left")
+	K3("ralt", "ralt", "right?alt", "alt?right")
+	K2("ctrl", "ctrl", "control")
 	K("alt")
 	K("shift")
 
 	/* it's safe to have directions as last entries to prevent incorrect */
 	/* recognition of "ctrl left" or similar */
-	KR2("left", "left", "cursor*left")
-	KR2("right", "right", "cursor*right")
-	KR2("up", "up", "cursor*up")
-	KR2("down", "down", "cursor*down")
+	K2("left", "left", "cursor*left")
+	K2("right", "right", "cursor*right")
+	K2("up", "up", "cursor*up")
+	K2("down", "down", "cursor*down")
 
 	K("f1")
 	K("f2")
@@ -1051,6 +1313,135 @@ static struct glue_keyboard_name GLUE_KEYBOARD_STD[] = {
 	}
 };
 #endif
+
+/**
+ * Other port name definitions.
+ */
+static struct glue_port_name GLUE_OTHER_STD[] = {
+
+	O2("stats", "stats", "statistics")
+	O("start")
+	O("select")
+	O("collect")
+	O("enter")
+	O("stop")
+	O1("stop_1", "stop?1")
+	O1("stop_2", "stop?2")
+	O1("stop_3", "stop?3")
+	O2("pay", "pay", "payout")
+	O("bet")
+	O1("cancel", "cancel*")
+	O1("call", "call*")
+	O("confirm")
+	O("take")
+	O("hp")
+	O("play")
+	O("small")
+	O("big")
+	O("double")
+	O("analyzer")
+	O("advance")
+	O("yes")
+	O("no")
+	O("chi")
+	O("pon")
+	O("kan")
+	O("reach")
+	O("ron")
+	O("red")
+	O("black")
+	O2("grid", "grid", "toggle?grid")
+	O1("p1_pad_1", "p1?pad?1")
+	O1("p1_pad_2", "p1?pad?2")
+	O1("p1_pad_3", "p1?pad?3")
+	O1("p1_pad_4", "p1?pad?4")
+	O1("p1_pad_5", "p1?pad?5")
+	O1("p1_pad_6", "p1?pad?6")
+	O1("p1_pad_7", "p1?pad?7")
+	O1("p1_pad_8", "p1?pad?8")
+	O1("p1_pad_9", "p1?pad?9")
+	O1("p2_pad_1", "p2?pad?1")
+	O1("p2_pad_2", "p2?pad?2")
+	O1("p2_pad_3", "p2?pad?3")
+	O1("p2_pad_4", "p2?pad?4")
+	O1("p2_pad_5", "p2?pad?5")
+	O1("p2_pad_6", "p2?pad?6")
+	O1("p2_pad_7", "p2?pad?7")
+	O1("p2_pad_8", "p2?pad?8")
+	O1("p2_pad_9", "p2?pad?9")
+
+	O("reset")
+	O1("memory_reset", "memory?reset")
+	O1("hopper_reset", "hopper?reset")
+	O1("high_score_reset", "high?score?reset")
+	O1("auto_up", "auto?up")
+	O1("auto_down", "auto?down")
+
+	O("up")
+	O2("down", "down", "key?down")
+	O("left")
+	O("right")
+
+	O1("top_center", "top?center")
+	O1("bottom_center", "bottom?center")
+	O1("top_left", "top?left")
+	O1("bottom_left", "bottom?left")
+	O1("top_right", "top?right")
+	O1("bottom_right", "bottom?right")
+
+	O1("hook_right", "hook?right")
+	O1("hook_left", "hook?left")
+
+	O1("left_trig", "l?trig")
+	O1("right_trig", "r?trig")
+
+	O2("next", "next", "next?game")
+	O2("previous", "previous", "previous?game")
+	O3("test", "test", "test switch", "test 1")
+	O2("operator", "operator", "operator?menu")
+	O("suicide")
+	O2("center", "center", "move?to?center")
+
+	O2("0", "0", "option?0")
+	O2("1", "1", "option?1")
+	O2("2", "2", "option?2")
+	O2("3", "3", "option?3")
+	O2("4", "4", "option?4")
+	O2("5", "5", "option?5")
+	O2("6", "6", "option?6")
+	O2("7", "7", "option?7")
+	O2("8", "8", "option?8")
+	O2("9", "9", "option?9")
+
+	O("q")
+	O("w")
+	O("e")
+	O("r")
+	O("t")
+	O("y")
+	O("u")
+	O("i")
+	O("o")
+	O("p")
+	O3("a", "a", "game?a", "skill?a")
+	O("s")
+	O("d")
+	O("f")
+	O("g")
+	O("h")
+	O("j")
+	O("k")
+	O("l")
+	O("z")
+	O("x")
+	O3("c", "c", "game?c", "skill?c")
+	O("v")
+	O3("b", "b", "game?b", "skill?b")
+	O("n")
+	O("m"){
+		0
+	}
+};
 
 /**
  * Input ports.
@@ -1275,23 +1666,23 @@ int mame_port_player(unsigned port)
 	unsigned player = MAME_PORT_PLAYER_GET(port);
 
 	switch (type) {
-	case IPT_START1: return 1;
-	case IPT_START2: return 2;
-	case IPT_START3: return 3;
-	case IPT_START4: return 4;
-	case IPT_START5: return 5;
-	case IPT_START6: return 6;
-	case IPT_START7: return 7;
-	case IPT_START8: return 8;
-	case IPT_COIN1: return 1;
-	case IPT_COIN2: return 2;
-	case IPT_COIN3: return 3;
-	case IPT_COIN4: return 4;
-	case IPT_COIN5: return 5;
-	case IPT_COIN6: return 6;
-	case IPT_COIN7: return 7;
-	case IPT_COIN8: return 8;
-	case IPT_BILL1: return 1;
+	case IPT_START1 : return 1;
+	case IPT_START2 : return 2;
+	case IPT_START3 : return 3;
+	case IPT_START4 : return 4;
+	case IPT_START5 : return 5;
+	case IPT_START6 : return 6;
+	case IPT_START7 : return 7;
+	case IPT_START8 : return 8;
+	case IPT_COIN1 : return 1;
+	case IPT_COIN2 : return 2;
+	case IPT_COIN3 : return 3;
+	case IPT_COIN4 : return 4;
+	case IPT_COIN5 : return 5;
+	case IPT_COIN6 : return 6;
+	case IPT_COIN7 : return 7;
+	case IPT_COIN8 : return 8;
+	case IPT_BILL1 : return 1;
 	}
 
 	return player;
@@ -1316,19 +1707,19 @@ void glue_seq_convert(unsigned* mame_seq, unsigned mame_max, unsigned* seq, unsi
 		adv_bool c_set;
 
 		switch (mame_seq[j]) {
-		case CODE_OR:
+		case CODE_OR :
 			prev_or = 1; /* implicitely remove consecutive or */
 			c_set = 0;
 			break;
-		case CODE_NOT:
+		case CODE_NOT :
 			prev_not = 1;
 			c_set = 0;
 			break;
-		case CODE_DEFAULT:
+		case CODE_DEFAULT :
 			c = DIGITAL_SPECIAL_AUTO;
 			c_set = 1;
 			break;
-		default:
+		default :
 			c = code_to_oscode(mame_seq[j]);
 			if (c != 0) {
 				c_set = 1;
@@ -1389,19 +1780,19 @@ void glue_seq_convertback(unsigned* seq, unsigned max, unsigned* mame_seq, unsig
 		adv_bool c_set;
 
 		switch (seq[j]) {
-		case DIGITAL_SPECIAL_OR:
+		case DIGITAL_SPECIAL_OR :
 			prev_or = 1; /* implicitely remove consecutive or */
 			c_set = 0;
 			break;
-		case DIGITAL_SPECIAL_NOT:
+		case DIGITAL_SPECIAL_NOT :
 			prev_not = 1;
 			c_set = 0;
 			break;
-		case DIGITAL_SPECIAL_AUTO:
+		case DIGITAL_SPECIAL_AUTO :
 			c = CODE_DEFAULT;
 			c_set = 1;
 			break;
-		default:
+		default :
 			c = oscode_to_code(seq[j]);
 			/* ignore unmapped codes, it happen if the configuration */
 			/* file refers at a control now removed */
@@ -1513,6 +1904,42 @@ static unsigned glue_keyboard_find(const char* const_name)
 }
 #endif
 
+static unsigned glue_other_find(const char* const_name)
+{
+	int i;
+	char name_buffer[128];
+	char* name;
+	char* s;
+	unsigned name_len;
+	unsigned j, k;
+
+	if (!const_name) {
+		log_std(("WARNING:glue: other port without a name\n"));
+		return 0;
+	}
+
+	/* duplicate */
+	sncpy(name_buffer, sizeof(name_buffer), const_name);
+	name = name_buffer;
+
+	/* comparison is in lower case */
+	osd_strlwr(name);
+
+	/* search for exact match */
+	for (j = 0; GLUE_OTHER_STD[j].name; ++j) {
+		for (k = 0; GLUE_OTHER_STD[j].glob[k]; ++k) {
+			if (sglob(name_buffer, GLUE_OTHER_STD[j].glob[k])) {
+				log_std(("glue: map other '%s' to control '%s' (exact)\n", name, GLUE_OTHER_STD[j].name));
+				return MAME_PORT_OTHER(j);
+			}
+		}
+	}
+
+	log_std(("WARNING:glue: other port '%s' not recognized\n", name));
+
+	return 0;
+}
+
 /**
  * Begin index of sequences for a MAME port type.
  */
@@ -1541,8 +1968,8 @@ int glue_port_seqtype(unsigned type, unsigned index)
 {
 	if (port_type_is_analog(type)) {
 		switch (index) {
-		case 0: return SEQ_TYPE_INCREMENT;
-		case 1: return SEQ_TYPE_DECREMENT;
+		case 0 : return SEQ_TYPE_INCREMENT;
+		case 1 : return SEQ_TYPE_DECREMENT;
 		}
 	} else {
 		return SEQ_TYPE_STANDARD;
@@ -1560,13 +1987,13 @@ int glue_port_seqtype(unsigned type, unsigned index)
 input_seq* glue_portdef_seq_get(input_port_default_entry* port, int seqtype)
 {
 	switch (seqtype) {
-	case SEQ_TYPE_STANDARD:
+	case SEQ_TYPE_STANDARD :
 		return &port->defaultseq;
-	case SEQ_TYPE_INCREMENT:
+	case SEQ_TYPE_INCREMENT :
 		if (port_type_is_analog(port->type))
 			return &port->defaultincseq;
 		break;
-	case SEQ_TYPE_DECREMENT:
+	case SEQ_TYPE_DECREMENT :
 		if (port_type_is_analog(port->type))
 			return &port->defaultdecseq;
 		break;
@@ -1584,13 +2011,13 @@ input_seq* glue_portdef_seq_get(input_port_default_entry* port, int seqtype)
 input_seq* glue_port_seq_get(input_port_entry* port, int seqtype)
 {
 	switch (seqtype) {
-	case SEQ_TYPE_STANDARD:
+	case SEQ_TYPE_STANDARD :
 		return &port->seq;
-	case SEQ_TYPE_INCREMENT:
+	case SEQ_TYPE_INCREMENT :
 		if (port_type_is_analog(port->type))
 			return &port->analog.incseq;
 		break;
-	case SEQ_TYPE_DECREMENT:
+	case SEQ_TYPE_DECREMENT :
 		if (port_type_is_analog(port->type))
 			return &port->analog.decseq;
 		break;
@@ -1654,31 +2081,36 @@ unsigned glue_port_convert(unsigned type, unsigned player, unsigned seqtype, con
 	unsigned index;
 
 #ifdef MESS
-	/* keyboard ports have a special recongnition */
+	/* keyboard ports have a special recognition */
 	if (type == IPT_KEYBOARD) {
 		return glue_keyboard_find(name);
 	}
 #endif
 
+	/* other ports have a special recognition */
+	if (type == IPT_OTHER) {
+		return glue_other_find(name);
+	}
+
 	if (port_type_is_analog(type)) {
 		switch (seqtype) {
-		case SEQ_TYPE_STANDARD:  /* used for the mame_analog port */
-		case SEQ_TYPE_INCREMENT:
+		case SEQ_TYPE_STANDARD :  /* used for the mame_analog port */
+		case SEQ_TYPE_INCREMENT :
 			index = 0;
 			break;
-		case SEQ_TYPE_DECREMENT:
+		case SEQ_TYPE_DECREMENT :
 			index = 1;
 			break;
-		default:
+		default :
 			log_std(("ERROR:glue: convert unsupported SEQ_TYPE_ constant %d\n", seqtype));
 			return 0;
 		}
 	} else {
 		switch (seqtype) {
-		case SEQ_TYPE_STANDARD:
+		case SEQ_TYPE_STANDARD :
 			index = 0;
 			break;
-		default:
+		default :
 			log_std(("ERROR:glue: convert unsupported SEQ_TYPE_ constant %d\n", seqtype));
 			return 0;
 		}
@@ -2056,35 +2488,35 @@ int mame_ui_port_pressed(unsigned port)
 	type = MAME_PORT_TYPE_GET(port);
 
 	switch (type) {
-	case IPT_MAME_PORT_SAFEQUIT:
+	case IPT_MAME_PORT_SAFEQUIT :
 		return advance_safequit_can_exit(safequit_context);
-	case IPT_MAME_PORT_EVENT1:
+	case IPT_MAME_PORT_EVENT1 :
 		return (advance_safequit_event_mask(safequit_context) & 0x4) != 0;
-	case IPT_MAME_PORT_EVENT2:
+	case IPT_MAME_PORT_EVENT2 :
 		return (advance_safequit_event_mask(safequit_context) & 0x8) != 0;
-	case IPT_MAME_PORT_EVENT3:
+	case IPT_MAME_PORT_EVENT3 :
 		return (advance_safequit_event_mask(safequit_context) & 0x10) != 0;
-	case IPT_MAME_PORT_EVENT4:
+	case IPT_MAME_PORT_EVENT4 :
 		return (advance_safequit_event_mask(safequit_context) & 0x20) != 0;
-	case IPT_MAME_PORT_EVENT5:
+	case IPT_MAME_PORT_EVENT5 :
 		return (advance_safequit_event_mask(safequit_context) & 0x40) != 0;
-	case IPT_MAME_PORT_EVENT6:
+	case IPT_MAME_PORT_EVENT6 :
 		return (advance_safequit_event_mask(safequit_context) & 0x80) != 0;
-	case IPT_MAME_PORT_EVENT7:
+	case IPT_MAME_PORT_EVENT7 :
 		return (advance_safequit_event_mask(safequit_context) & 0x100) != 0;
-	case IPT_MAME_PORT_EVENT8:
+	case IPT_MAME_PORT_EVENT8 :
 		return (advance_safequit_event_mask(safequit_context) & 0x200) != 0;
-	case IPT_MAME_PORT_EVENT9:
+	case IPT_MAME_PORT_EVENT9 :
 		return (advance_safequit_event_mask(safequit_context) & 0x400) != 0;
-	case IPT_MAME_PORT_EVENT10:
+	case IPT_MAME_PORT_EVENT10 :
 		return (advance_safequit_event_mask(safequit_context) & 0x800) != 0;
-	case IPT_MAME_PORT_EVENT11:
+	case IPT_MAME_PORT_EVENT11 :
 		return (advance_safequit_event_mask(safequit_context) & 0x1000) != 0;
-	case IPT_MAME_PORT_EVENT12:
+	case IPT_MAME_PORT_EVENT12 :
 		return (advance_safequit_event_mask(safequit_context) & 0x2000) != 0;
-	case IPT_MAME_PORT_EVENT13:
+	case IPT_MAME_PORT_EVENT13 :
 		return (advance_safequit_event_mask(safequit_context) & 0x4000) != 0;
-	case IPT_MAME_PORT_EVENT14:
+	case IPT_MAME_PORT_EVENT14 :
 		return (advance_safequit_event_mask(safequit_context) & 0x8000) != 0;
 	}
 
@@ -2172,7 +2604,7 @@ void osd_free_executable(void* p)
  * Ensure that a memory region is valid.
  * It can return alwasy 0 if this check is not possible.
  */
-int osd_is_bad_read_ptr(const void *ptr, size_t size)
+int osd_is_bad_read_ptr(const void* ptr, size_t size)
 {
 	return 0;
 }
@@ -2183,7 +2615,7 @@ int osd_is_bad_read_ptr(const void *ptr, size_t size)
  * - ==0 On success.
  * - ==-1 On error.
  */
-int osd_create_display(const osd_create_params *params, UINT32 *rgb_components)
+int osd_create_display(const osd_create_params* params, UINT32* rgb_components)
 {
 	unsigned width;
 	unsigned height;
@@ -2288,13 +2720,13 @@ int osd_menu(unsigned menu, int selected)
 		input |= OSD_INPUT_RIGHT;
 
 	switch (menu) {
-	case 0:
+	case 0 :
 		r = osd2_video_menu(selected, input);
 		break;
-	case 1:
+	case 1 :
 		r = osd2_audio_menu(selected, input);
 		break;
-	default:
+	default :
 		r = -1;
 		break;
 	}
@@ -2334,7 +2766,7 @@ static unsigned glue_sound_sample(void)
  * Update the video frame.
  * \note Called after osd_update_audio_stream().
  */
-void osd_update_video_and_audio(mame_display *display)
+void osd_update_video_and_audio(mame_display* display)
 {
 	struct osd_bitmap game;
 	struct osd_bitmap debug;
@@ -2430,7 +2862,11 @@ void osd_update_video_and_audio(mame_display *display)
 #else
 		display->knocker_state
 #endif
-		);
+	);
+
+	if (CONTEXT.input.state.input_forced_exit_flag) {
+		mame_schedule_exit();
+	}
 
 	profiler_mark(PROFILER_END);
 }
@@ -2595,11 +3031,17 @@ static int on_exit_menu(int selected)
 	int sel;
 	int total;
 
+	struct advance_input_context* context = &CONTEXT.input;
+
 	sel = selected;
 
 	total = 0;
 
+#ifdef MESS
 	exit_menu[total].text = "Continue";
+#else
+	exit_menu[total].text = "Insert Coin";
+#endif
 	exit_menu[total].subtext = 0;
 	exit_menu[total].flags = 0;
 	++total;
@@ -2635,12 +3077,19 @@ static int on_exit_menu(int selected)
 	}
 
 	if (input_ui_pressed(IPT_UI_SELECT)) {
+		int key0 = 0;
 		switch (sel) {
-		case 0: sel = -1; break;
-		case 1: sel = -2; break;
-		case 2: sel = -3; break;
-		case 3: sel = -4; break;
-		case 4: sel = -5; break;
+		case 0 : key0 = KEYB_5; sel = -1; break;
+		case 1 : sel = -2; break;
+		case 2 : sel = -3; break;
+		case 3 : sel = -4; break;
+		case 4 : sel = -5; break;
+		}
+		if (key0 != 0) {
+			sel = -1;
+#ifndef MESS
+			advance_input_simulate_key(context, key0, 0, 10);
+#endif
 		}
 	}
 
@@ -2727,15 +3176,15 @@ static int on_key_menu(int selected)
 		int key0 = 0;
 		int key1 = 0;
 		switch (sel) {
-		case 0: key0 = KEYB_1; break;
-		case 1: key0 = KEYB_2; break;
-		case 2: key0 = KEYB_3; break;
-		case 3: key0 = KEYB_4; break;
-		case 4: key0 = KEYB_A; break;
-		case 5: key0 = KEYB_B; break;
-		case 6: key0 = KEYB_8; key1 = KEYB_ALT; break;
-		case 7: key0 = KEYB_9; key1 = KEYB_ALT; break;
-		case 8: key0 = KEYB_ENTER; break;
+		case 0 : key0 = KEYB_1; break;
+		case 1 : key0 = KEYB_2; break;
+		case 2 : key0 = KEYB_3; break;
+		case 3 : key0 = KEYB_4; break;
+		case 4 : key0 = KEYB_A; break;
+		case 5 : key0 = KEYB_B; break;
+		case 6 : key0 = KEYB_8; key1 = KEYB_ALT; break;
+		case 7 : key0 = KEYB_9; key1 = KEYB_ALT; break;
+		case 8 : key0 = KEYB_ENTER; break;
 		}
 		if (key0 != 0) {
 			sel = -1;
@@ -2755,7 +3204,6 @@ static int on_key_menu(int selected)
 	return sel;
 }
 
-
 /**
  * Handle the OSD user interface.
  * \return
@@ -2765,7 +3213,7 @@ static int on_key_menu(int selected)
  * - ==3 User asked to save
  * - ==4 User asked to load
  */
-int osd_handle_user_interface(mame_bitmap *bitmap, int is_menu_active)
+int osd_handle_user_interface(mame_bitmap* bitmap, int is_menu_active)
 {
 	unsigned input;
 
@@ -2788,10 +3236,10 @@ int osd_handle_user_interface(mame_bitmap *bitmap, int is_menu_active)
 			mame_pause(0);
 
 			switch (res) {
-			case -2: return 4;
-			case -3: return 3;
-			case -4: return 2;
-			case -5: return 1;
+			case -2 : return 4;
+			case -3 : return 3;
+			case -4 : return 2;
+			case -5 : return 1;
 			}
 		}
 	}
@@ -3026,17 +3474,27 @@ adv_error mame_init(struct advance_context* context)
 	}
 #endif
 
+	/* add the keyboard names */
+	for (i = 0; GLUE_OTHER_STD[i].name; ++i) {
+		if (j + 1 < GLUE_PORT_MAX) {
+			GLUE_PORT[j].name = GLUE_OTHER_STD[i].name;
+			GLUE_PORT[j].desc = GLUE_OTHER_STD[i].desc;
+			GLUE_PORT[j].port = MAME_PORT_OTHER(i);
+			++j;
+		}
+	}
+
 	if (j + 1 >= GLUE_PORT_MAX) {
 		printf("Internal error, increase GLUE_PORT_MAX!\n");
 		abort();
 	}
-
 
 	/* mark the end */
 	GLUE_PORT[j].name = 0;
 	GLUE_PORT[j].desc = 0;
 	GLUE_PORT[j].port = 0;
 
+	conf_string_register_default(context->cfg, "display_artwork_view", "auto");
 	conf_bool_register_default(context->cfg, "display_artwork_backdrop", 1);
 	conf_bool_register_default(context->cfg, "display_artwork_overlay", 1);
 	conf_bool_register_default(context->cfg, "display_artwork_bezel", 0);
@@ -3079,6 +3537,13 @@ adv_error mame_config_load(adv_conf* cfg_context, struct mame_option* option)
 {
 	char* s;
 	unsigned i, j;
+
+	const char* artwork_view = conf_string_get_default(cfg_context, "display_artwork_view");
+	if (strlen(artwork_view) >= sizeof(option->artwork_view_buffer)) {
+		printf("artwork: view name is too long\n");
+		return -1;
+	}
+	strcpy(option->artwork_view_buffer, artwork_view);
 
 	option->artwork_backdrop_flag = conf_bool_get_default(cfg_context, "display_artwork_backdrop");
 	option->artwork_overlay_flag = conf_bool_get_default(cfg_context, "display_artwork_overlay");
@@ -3145,6 +3610,16 @@ adv_error mame_config_load(adv_conf* cfg_context, struct mame_option* option)
 	for (i = 0; GLUE_KEYBOARD_STD[i].name; ++i) {
 		j += strlen(GLUE_KEYBOARD_STD[i].name) + 2;
 		log_std(("%s,", GLUE_KEYBOARD_STD[i].name));
+		if (j > 54) {
+			j = 0;
+			log_std(("\n\t\t"));
+		} else {
+			log_std((" "));
+		}
+	}
+	for (i = 0; GLUE_OTHER_STD[i].name; ++i) {
+		j += strlen(GLUE_OTHER_STD[i].name) + 2;
+		log_std(("%s,", GLUE_OTHER_STD[i].name));
 		if (j > 54) {
 			j = 0;
 			log_std(("\n\t\t"));

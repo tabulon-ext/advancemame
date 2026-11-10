@@ -1,0 +1,2296 @@
+// license:BSD-3-Clause
+// copyright-holders:Pierpaolo Prazzoli
+/***************************************************************************
+
+Ghosts'n Goblins
+Diamond Run
+
+
+Notes:
+- Diamond Run doesn't use all the ROMs. d5 is not used at all, and the second
+  half of d3o is not used either. There are 0x38 levels in total, the data for
+  levels 0x00-0x0f is taken from ROM space 0x8000-0xbfff, the data for levels
+  0x10-0x37 is taken from the banked space 0x4000-0x5fff (5 banks) (see the
+  table at 0xc66f). Actually, looking at the code it seems to roll overs at
+  level 0x2f, and indeed the data for levels 0x30-0x37 isn't valid (player
+  starts into a wall, or there are invisible walls, etc.)
+  The 0x6000-0x7fff ROM space doesn't seem to be used: instead the game writes
+  to 6048 and reads from 6000. Silly copy protection?
+
+- Increased REGION_GFX3 to address 0x400 sprites, to avoid Ghosts'n Goblins
+  from drawing a bad sprite. (18/08/2005 Pierpaolo Prazzoli)
+
+***************************************************************************/
+
+#include "driver.h"
+#include "cpu/m6809/m6809.h"
+#include "sound/2203intf.h"
+
+
+
+extern unsigned char *gng_fgvideoram;
+extern unsigned char *gng_bgvideoram;
+WRITE8_HANDLER( gng_fgvideoram_w );
+WRITE8_HANDLER( gng_bgvideoram_w );
+WRITE8_HANDLER( gng_bgscrollx_w );
+WRITE8_HANDLER( gng_bgscrolly_w );
+WRITE8_HANDLER( gng_flipscreen_w );
+VIDEO_START( gng );
+VIDEO_UPDATE( gng );
+VIDEO_EOF( gng );
+
+
+
+static WRITE8_HANDLER( gng_bankswitch_w )
+{
+	unsigned char *rom = memory_region(REGION_CPU1);
+
+
+	if (data == 4)
+	{
+		memory_set_bankptr(1,rom + 0x4000);
+	}
+	else
+	{
+		memory_set_bankptr(1,rom + 0x10000 + (data & 3) * 0x2000);
+	}
+}
+
+static WRITE8_HANDLER( gng_coin_counter_w )
+{
+	coin_counter_w(offset,data);
+}
+
+static ADDRESS_MAP_START( readmem, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0x0000, 0x2fff) AM_READ(MRA8_RAM)
+	AM_RANGE(0x3000, 0x3000) AM_READ(input_port_0_r)
+	AM_RANGE(0x3001, 0x3001) AM_READ(input_port_1_r)
+	AM_RANGE(0x3002, 0x3002) AM_READ(input_port_2_r)
+	AM_RANGE(0x3003, 0x3003) AM_READ(input_port_3_r)
+	AM_RANGE(0x3004, 0x3004) AM_READ(input_port_4_r)
+	AM_RANGE(0x3c00, 0x3c00) AM_READ(MRA8_NOP)	/* watchdog? */
+	AM_RANGE(0x4000, 0x5fff) AM_READ(MRA8_BANK1)
+	AM_RANGE(0x6000, 0xffff) AM_READ(MRA8_ROM)
+ADDRESS_MAP_END
+
+static ADDRESS_MAP_START( writemem, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0x0000, 0x1dff) AM_WRITE(MWA8_RAM)
+	AM_RANGE(0x1e00, 0x1fff) AM_WRITE(MWA8_RAM) AM_BASE(&spriteram) AM_SIZE(&spriteram_size)
+	AM_RANGE(0x2000, 0x27ff) AM_WRITE(gng_fgvideoram_w) AM_BASE(&gng_fgvideoram)
+	AM_RANGE(0x2800, 0x2fff) AM_WRITE(gng_bgvideoram_w) AM_BASE(&gng_bgvideoram)
+	AM_RANGE(0x3800, 0x38ff) AM_WRITE(paletteram_RRRRGGGGBBBBxxxx_split2_w) AM_BASE(&paletteram_2)
+	AM_RANGE(0x3900, 0x39ff) AM_WRITE(paletteram_RRRRGGGGBBBBxxxx_split1_w) AM_BASE(&paletteram)
+	AM_RANGE(0x3a00, 0x3a00) AM_WRITE(soundlatch_w)
+	AM_RANGE(0x3b08, 0x3b09) AM_WRITE(gng_bgscrollx_w)
+	AM_RANGE(0x3b0a, 0x3b0b) AM_WRITE(gng_bgscrolly_w)
+	AM_RANGE(0x3c00, 0x3c00) AM_WRITE(MWA8_NOP)   /* watchdog? */
+	AM_RANGE(0x3d00, 0x3d00) AM_WRITE(gng_flipscreen_w)
+//  { 0x3d01, 0x3d01, reset sound cpu?
+	AM_RANGE(0x3d02, 0x3d03) AM_WRITE(gng_coin_counter_w)
+	AM_RANGE(0x3e00, 0x3e00) AM_WRITE(gng_bankswitch_w)
+	AM_RANGE(0x4000, 0xffff) AM_WRITE(MWA8_ROM)
+ADDRESS_MAP_END
+
+
+
+static ADDRESS_MAP_START( sound_readmem, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0xc000, 0xc7ff) AM_READ(MRA8_RAM)
+	AM_RANGE(0xc800, 0xc800) AM_READ(soundlatch_r)
+	AM_RANGE(0x0000, 0x7fff) AM_READ(MRA8_ROM)
+ADDRESS_MAP_END
+
+static ADDRESS_MAP_START( sound_writemem, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0xc000, 0xc7ff) AM_WRITE(MWA8_RAM)
+	AM_RANGE(0xe000, 0xe000) AM_WRITE(YM2203_control_port_0_w)
+	AM_RANGE(0xe001, 0xe001) AM_WRITE(YM2203_write_port_0_w)
+	AM_RANGE(0xe002, 0xe002) AM_WRITE(YM2203_control_port_1_w)
+	AM_RANGE(0xe003, 0xe003) AM_WRITE(YM2203_write_port_1_w)
+	AM_RANGE(0x0000, 0x7fff) AM_WRITE(MWA8_ROM)
+ADDRESS_MAP_END
+
+#define GNG_COMMON \
+	PORT_START_TAG("IN0")\
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )\
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_START2 )\
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_SERVICE1 )\
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_COIN1 )\
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_COIN2 )\
+	PORT_START_TAG("IN1")\
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_8WAY\
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_8WAY\
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_8WAY\
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_8WAY\
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 )\
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_BUTTON2 )\
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_START_TAG("IN2")\
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_8WAY PORT_COCKTAIL\
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_8WAY PORT_COCKTAIL\
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_8WAY PORT_COCKTAIL\
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_8WAY PORT_COCKTAIL\
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 ) PORT_COCKTAIL\
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_BUTTON2 ) PORT_COCKTAIL\
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )\
+	PORT_START_TAG("DSW0")\
+	PORT_DIPNAME( 0x0f, 0x0f, DEF_STR( Coinage ) )\
+	PORT_DIPSETTING(	0x02, DEF_STR( 4C_1C ) )\
+	PORT_DIPSETTING(	0x05, DEF_STR( 3C_1C ) )\
+	PORT_DIPSETTING(	0x08, DEF_STR( 2C_1C ) )\
+	PORT_DIPSETTING(	0x04, DEF_STR( 3C_2C ) )\
+	PORT_DIPSETTING(	0x01, DEF_STR( 4C_3C ) )\
+	PORT_DIPSETTING(	0x0f, DEF_STR( 1C_1C ) )\
+	PORT_DIPSETTING(	0x03, DEF_STR( 3C_4C ) )\
+	PORT_DIPSETTING(	0x07, DEF_STR( 2C_3C ) )\
+	PORT_DIPSETTING(	0x0e, DEF_STR( 1C_2C ) )\
+	PORT_DIPSETTING(	0x06, DEF_STR( 2C_5C ) )\
+	PORT_DIPSETTING(	0x0d, DEF_STR( 1C_3C ) )\
+	PORT_DIPSETTING(	0x0c, DEF_STR( 1C_4C ) )\
+	PORT_DIPSETTING(	0x0b, DEF_STR( 1C_5C ) )\
+	PORT_DIPSETTING(	0x0a, DEF_STR( 1C_6C ) )\
+	PORT_DIPSETTING(	0x09, DEF_STR( 1C_7C ) )\
+	PORT_DIPSETTING(	0x00, DEF_STR( Free_Play ) )\
+	PORT_DIPNAME( 0x10, 0x10, "Coinage affects" )\
+	PORT_DIPSETTING(	0x10, DEF_STR( Coin_A ) )\
+	PORT_DIPSETTING(	0x00, DEF_STR( Coin_B ) )\
+	PORT_DIPNAME( 0x20, 0x00, DEF_STR( Demo_Sounds ) )\
+	PORT_DIPSETTING(	0x20, DEF_STR( Off ) )\
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )\
+	PORT_SERVICE( 0x40, IP_ACTIVE_LOW )\
+	PORT_DIPNAME( 0x80, 0x80, DEF_STR( Flip_Screen ) )\
+	PORT_DIPSETTING(	0x80, DEF_STR( Off ) )\
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )\
+	PORT_START_TAG("DSW1")\
+	PORT_DIPNAME( 0x03, 0x03, DEF_STR( Lives ) )\
+	PORT_DIPSETTING(	0x03, "3" )\
+	PORT_DIPSETTING(	0x02, "4" )\
+	PORT_DIPSETTING(	0x01, "5" )\
+	PORT_DIPSETTING(	0x00, "7" )\
+	PORT_DIPNAME( 0x04, 0x00, DEF_STR( Cabinet ) )\
+	PORT_DIPSETTING(	0x00, DEF_STR( Upright ) )\
+	PORT_DIPSETTING(	0x04, DEF_STR( Cocktail ) )\
+	PORT_DIPNAME( 0x18, 0x18, DEF_STR( Bonus_Life ) )\
+	PORT_DIPSETTING(	0x18, "20000 70000 70000" )\
+	PORT_DIPSETTING(	0x10, "30000 80000 80000" )\
+	PORT_DIPSETTING(	0x08, "20000 80000" )\
+	PORT_DIPSETTING(	0x00, "30000 80000" )\
+	PORT_DIPNAME( 0x60, 0x60, DEF_STR( Difficulty ) )\
+	PORT_DIPSETTING(	0x40, DEF_STR( Easy ) )\
+	PORT_DIPSETTING(	0x60, DEF_STR( Normal ) )\
+	PORT_DIPSETTING(	0x20, "Difficult" )\
+	PORT_DIPSETTING(	0x00, "Very Difficult" )
+
+INPUT_PORTS_START( gng )
+GNG_COMMON
+
+	PORT_DIPNAME( 0x80, 0x80, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(	0x80, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+INPUT_PORTS_END
+
+/* identical to gng, but the "unknown" dip switch is Invulnerability */
+INPUT_PORTS_START( makaimur )
+GNG_COMMON
+	PORT_DIPNAME( 0x80, 0x80, "Invulnerability (Cheat)")
+	PORT_DIPSETTING(	0x80, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+INPUT_PORTS_END
+
+INPUT_PORTS_START( diamond )
+	PORT_START_TAG("IN0")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_START2 )
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_COIN1 )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_COIN2 )
+
+	PORT_START_TAG("IN1")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_4WAY
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_4WAY
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_4WAY
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_4WAY
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )
+
+	PORT_START_TAG("IN2")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_UNKNOWN )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_UNKNOWN )
+
+	PORT_START_TAG("DSW0")
+	PORT_DIPNAME( 0x03, 0x01, DEF_STR( Lives ) )
+	PORT_DIPSETTING(	0x00, "2" )
+	PORT_DIPSETTING(	0x01, "3" )
+	PORT_DIPSETTING(	0x02, "4" )
+	PORT_DIPSETTING(	0x03, "5" )
+	PORT_DIPNAME( 0x0c, 0x00, DEF_STR( Coin_A ) )
+	PORT_DIPSETTING(	0x00, "*1" )
+	PORT_DIPSETTING(	0x04, "*2" )
+	PORT_DIPSETTING(	0x08, "*3" )
+	PORT_DIPSETTING(	0x0c, "*4" )
+	PORT_DIPNAME( 0x30, 0x00, DEF_STR( Coinage ) )
+	PORT_DIPSETTING(	0x30, DEF_STR( 4C_1C ))
+	PORT_DIPSETTING(	0x20, DEF_STR( 3C_1C ) )
+	PORT_DIPSETTING(	0x10, DEF_STR( 2C_1C ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( 1C_1C ) )
+	PORT_DIPNAME( 0x40, 0x00, "Unknown DSW1 7" )
+	PORT_DIPSETTING(	0x40, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x80, 0x80, DEF_STR( Flip_Screen ) )
+	PORT_DIPSETTING(	0x80, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+
+	PORT_START_TAG("DSW1")
+	PORT_DIPNAME( 0x01, 0x00, "Unknown DSW2 1" )
+	PORT_DIPSETTING(	0x01, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x02, 0x00, "Unknown DSW2 2" )
+	PORT_DIPSETTING(	0x02, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x04, 0x00, "Unknown DSW2 3" )
+	PORT_DIPSETTING(	0x04, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x08, 0x00, "Unknown DSW2 4" )
+	PORT_DIPSETTING(	0x08, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x30, 0x00, DEF_STR( Coin_B ) )
+	PORT_DIPSETTING(	0x00, "*1" )
+	PORT_DIPSETTING(	0x10, "*2" )
+	PORT_DIPSETTING(	0x20, "*3" )
+	PORT_DIPSETTING(	0x30, "*4" )
+	PORT_DIPNAME( 0x40, 0x00, "Unknown DSW2 7" )
+	PORT_DIPSETTING(	0x40, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x80, 0x00, "Unknown DSW2 8" )
+	PORT_DIPSETTING(	0x80, DEF_STR( Off ) )
+	PORT_DIPSETTING(	0x00, DEF_STR( On ) )
+INPUT_PORTS_END
+
+
+
+static const gfx_layout charlayout =
+{
+	8,8,
+	RGN_FRAC(1,1),
+	2,
+	{ 4, 0 },
+	{ 0, 1, 2, 3, 8+0, 8+1, 8+2, 8+3 },
+	{ 0*16, 1*16, 2*16, 3*16, 4*16, 5*16, 6*16, 7*16 },
+	16*8
+};
+static const gfx_layout tilelayout =
+{
+	16,16,
+	RGN_FRAC(1,3),
+	3,
+	{ RGN_FRAC(2,3), RGN_FRAC(1,3), RGN_FRAC(0,3) },
+	{ 0, 1, 2, 3, 4, 5, 6, 7,
+			16*8+0, 16*8+1, 16*8+2, 16*8+3, 16*8+4, 16*8+5, 16*8+6, 16*8+7 },
+	{ 0*8, 1*8, 2*8, 3*8, 4*8, 5*8, 6*8, 7*8,
+			8*8, 9*8, 10*8, 11*8, 12*8, 13*8, 14*8, 15*8 },
+	32*8
+};
+static const gfx_layout spritelayout =
+{
+	16,16,
+	RGN_FRAC(1,2),
+	4,
+	{ RGN_FRAC(1,2)+4, RGN_FRAC(1,2)+0, 4, 0 },
+	{ 0, 1, 2, 3, 8+0, 8+1, 8+2, 8+3,
+			32*8+0, 32*8+1, 32*8+2, 32*8+3, 33*8+0, 33*8+1, 33*8+2, 33*8+3 },
+	{ 0*16, 1*16, 2*16, 3*16, 4*16, 5*16, 6*16, 7*16,
+			8*16, 9*16, 10*16, 11*16, 12*16, 13*16, 14*16, 15*16 },
+	64*8
+};
+
+
+
+static const gfx_decode gfxdecodeinfo[] =
+{
+	{ REGION_GFX1, 0, &charlayout,	 0x80, 16 },	/* colors 0x80-0xbf */
+	{ REGION_GFX2, 0, &tilelayout,	 0x00,	8 },	/* colors 0x00-0x3f */
+	{ REGION_GFX3, 0, &spritelayout, 0x40,	4 },	/* colors 0x40-0x7f */
+	{ -1 } /* end of array */
+};
+
+
+
+
+static MACHINE_DRIVER_START( gng )
+
+	/* basic machine hardware */
+	MDRV_CPU_ADD(M6809, 1500000)			/* 1.5 MHz ? */
+	MDRV_CPU_PROGRAM_MAP(readmem,writemem)
+	MDRV_CPU_VBLANK_INT(irq0_line_hold,1)
+
+	MDRV_CPU_ADD(Z80, 3000000)
+	/* audio CPU */
+	MDRV_CPU_PROGRAM_MAP(sound_readmem,sound_writemem)
+	MDRV_CPU_VBLANK_INT(irq0_line_hold,4)
+
+	MDRV_FRAMES_PER_SECOND(60)
+	MDRV_VBLANK_DURATION(DEFAULT_60HZ_VBLANK_DURATION)
+
+	/* video hardware */
+	MDRV_VIDEO_ATTRIBUTES(VIDEO_TYPE_RASTER | VIDEO_BUFFERS_SPRITERAM)
+	MDRV_SCREEN_SIZE(32*8, 32*8)
+	MDRV_VISIBLE_AREA(0*8, 32*8-1, 2*8, 30*8-1)
+	MDRV_GFXDECODE(gfxdecodeinfo)
+	MDRV_PALETTE_LENGTH(256)
+
+	MDRV_VIDEO_START(gng)
+	MDRV_VIDEO_EOF(gng)
+	MDRV_VIDEO_UPDATE(gng)
+
+	/* sound hardware */
+	MDRV_SPEAKER_STANDARD_MONO("mono")
+
+	MDRV_SOUND_ADD(YM2203, 1500000)
+	MDRV_SOUND_ROUTE(0, "mono", 0.40)
+	MDRV_SOUND_ROUTE(1, "mono", 0.40)
+	MDRV_SOUND_ROUTE(2, "mono", 0.40)
+	MDRV_SOUND_ROUTE(3, "mono", 0.20)
+
+	MDRV_SOUND_ADD(YM2203, 1500000)
+	MDRV_SOUND_ROUTE(0, "mono", 0.40)
+	MDRV_SOUND_ROUTE(1, "mono", 0.40)
+	MDRV_SOUND_ROUTE(2, "mono", 0.40)
+	MDRV_SOUND_ROUTE(3, "mono", 0.20)
+MACHINE_DRIVER_END
+
+
+
+/***************************************************************************
+
+  Game driver(s)
+
+***************************************************************************/
+
+ROM_START( gng )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4.bin",      0x04000, 0x4000, CRC(66606beb) SHA1(4c640f49be93c7d2b12d4d4c56c56e74099b6c2f) ) /* 4000-5fff is page 4 */
+	ROM_LOAD( "gg3.bin",      0x08000, 0x8000, CRC(9e01c65e) SHA1(a87880d87c64a6d61313c3bc69c8d49511e0f9c3) )
+	ROM_LOAD( "gg5.bin",      0x10000, 0x8000, CRC(d6397b2b) SHA1(39aa3cb8c229e60ac0ac410ff61e0c09dba78501) ) /* page 0, 1, 2, 3 */
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin",      0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1.bin",      0x00000, 0x4000, CRC(ecfccf07) SHA1(0a1518e19a2e0a4cc3dde4b9568202ea911b5ece) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin",     0x00000, 0x4000, CRC(ddd56fa9) SHA1(f9d77eee5e2738b7e83ba02fcc55dd480391479f) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "gg10.bin",     0x04000, 0x4000, CRC(7302529d) SHA1(8434c994cc55d2586641f3b90b6b15fd65dfb67c) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "gg9.bin",      0x08000, 0x4000, CRC(20035bda) SHA1(bbb1fba0eb19471f66d29526fa8423ccb047bd63) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "gg8.bin",      0x0c000, 0x4000, CRC(f12ba271) SHA1(1c42fa02cb27b35d10c3f7f036005e747f9f6b79) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "gg7.bin",      0x10000, 0x4000, CRC(e525207d) SHA1(1947f159189b3a53f1251d8653b6e7c65c91fc3c) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "gg6.bin",      0x14000, 0x4000, CRC(2d77e9b2) SHA1(944da1ce29a18bf0fc8deff78bceacba0bf23a07) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17.bin",     0x00000, 0x4000, CRC(93e50a8f) SHA1(42d367f57bb2fdf60a0445ac1533da99cfeaa617) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "gg16.bin",     0x04000, 0x4000, CRC(06d7e5ca) SHA1(9e06012bcd82f98fad43de666ef9a75979d940ab) ) /* sprites 1 Plane 1-2 */
+	ROM_LOAD( "gg15.bin",     0x08000, 0x4000, CRC(bc1fe02d) SHA1(e3a1421d465b87148ffa94f5673b2307f0246afe) ) /* sprites 2 Plane 1-2 */
+	ROM_LOAD( "gg14.bin",     0x10000, 0x4000, CRC(6aaf12f9) SHA1(207a7407288182a4f3eddaea634c6a6452131182) ) /* sprites 0 Plane 3-4 */
+	ROM_LOAD( "gg13.bin",     0x14000, 0x4000, CRC(e80c3fca) SHA1(cb641c25bb04b970b2cbeca41adb792bbe142fb5) ) /* sprites 1 Plane 3-4 */
+	ROM_LOAD( "gg12.bin",     0x18000, 0x4000, CRC(7780a925) SHA1(3f129ca6d695548b659955fe538584bd9ac2ff17) ) /* sprites 2 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "tbp24s10.14k", 0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "63s141.2e",    0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( gnga )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gng.n10",      0x04000, 0x4000, CRC(60343188) SHA1(dfc95d3f23a3a4b05b559f1dc76488b2659fbf66) )
+	ROM_LOAD( "gng.n9",       0x08000, 0x4000, CRC(b6b91cfb) SHA1(019a38b1c4e987715be1575948a3dc06ee59123d) )
+	ROM_LOAD( "gng.n8",       0x0c000, 0x4000, CRC(a5cfa928) SHA1(29dada8c4dbe04969d0d68faac559d2b4a3db711) )
+	ROM_LOAD( "gng.n13",      0x10000, 0x4000, CRC(fd9a8dda) SHA1(222c3c759c6b60f82351b9e6bf748fb4872e82b4) )
+	ROM_LOAD( "gng.n12",      0x14000, 0x4000, CRC(13cf6238) SHA1(0305908e922891a6a6b6c29e6a099867215d084e) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin",      0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1.bin",      0x00000, 0x4000, CRC(ecfccf07) SHA1(0a1518e19a2e0a4cc3dde4b9568202ea911b5ece) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin",     0x00000, 0x4000, CRC(ddd56fa9) SHA1(f9d77eee5e2738b7e83ba02fcc55dd480391479f) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "gg10.bin",     0x04000, 0x4000, CRC(7302529d) SHA1(8434c994cc55d2586641f3b90b6b15fd65dfb67c) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "gg9.bin",      0x08000, 0x4000, CRC(20035bda) SHA1(bbb1fba0eb19471f66d29526fa8423ccb047bd63) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "gg8.bin",      0x0c000, 0x4000, CRC(f12ba271) SHA1(1c42fa02cb27b35d10c3f7f036005e747f9f6b79) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "gg7.bin",      0x10000, 0x4000, CRC(e525207d) SHA1(1947f159189b3a53f1251d8653b6e7c65c91fc3c) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "gg6.bin",      0x14000, 0x4000, CRC(2d77e9b2) SHA1(944da1ce29a18bf0fc8deff78bceacba0bf23a07) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17.bin",     0x00000, 0x4000, CRC(93e50a8f) SHA1(42d367f57bb2fdf60a0445ac1533da99cfeaa617) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "gg16.bin",     0x04000, 0x4000, CRC(06d7e5ca) SHA1(9e06012bcd82f98fad43de666ef9a75979d940ab) ) /* sprites 1 Plane 1-2 */
+	ROM_LOAD( "gg15.bin",     0x08000, 0x4000, CRC(bc1fe02d) SHA1(e3a1421d465b87148ffa94f5673b2307f0246afe) ) /* sprites 2 Plane 1-2 */
+	ROM_LOAD( "gg14.bin",     0x10000, 0x4000, CRC(6aaf12f9) SHA1(207a7407288182a4f3eddaea634c6a6452131182) ) /* sprites 0 Plane 3-4 */
+	ROM_LOAD( "gg13.bin",     0x14000, 0x4000, CRC(e80c3fca) SHA1(cb641c25bb04b970b2cbeca41adb792bbe142fb5) ) /* sprites 1 Plane 3-4 */
+	ROM_LOAD( "gg12.bin",     0x18000, 0x4000, CRC(7780a925) SHA1(3f129ca6d695548b659955fe538584bd9ac2ff17) ) /* sprites 2 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "tbp24s10.14k", 0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "63s141.2e",    0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( gngt )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm04",         0x04000, 0x4000, CRC(652406f6) SHA1(3b2bafd31f670ea26c568c48f3bd00597e5a2ed6) ) /* 4000-5fff is page 4 */
+	ROM_LOAD( "mm03",         0x08000, 0x8000, CRC(fb040b42) SHA1(c1c58943bd20c6a2520b39fae90067769ec97ed6) )
+	ROM_LOAD( "mm05",         0x10000, 0x8000, CRC(8f7cff61) SHA1(1875f254a7737e1fbf6770ee4a322d675d043a44) ) /* page 0, 1, 2, 3 */
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin",      0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1.bin",      0x00000, 0x4000, CRC(ecfccf07) SHA1(0a1518e19a2e0a4cc3dde4b9568202ea911b5ece) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin",     0x00000, 0x4000, CRC(ddd56fa9) SHA1(f9d77eee5e2738b7e83ba02fcc55dd480391479f) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "gg10.bin",     0x04000, 0x4000, CRC(7302529d) SHA1(8434c994cc55d2586641f3b90b6b15fd65dfb67c) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "gg9.bin",      0x08000, 0x4000, CRC(20035bda) SHA1(bbb1fba0eb19471f66d29526fa8423ccb047bd63) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "gg8.bin",      0x0c000, 0x4000, CRC(f12ba271) SHA1(1c42fa02cb27b35d10c3f7f036005e747f9f6b79) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "gg7.bin",      0x10000, 0x4000, CRC(e525207d) SHA1(1947f159189b3a53f1251d8653b6e7c65c91fc3c) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "gg6.bin",      0x14000, 0x4000, CRC(2d77e9b2) SHA1(944da1ce29a18bf0fc8deff78bceacba0bf23a07) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17.bin",     0x00000, 0x4000, CRC(93e50a8f) SHA1(42d367f57bb2fdf60a0445ac1533da99cfeaa617) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "gg16.bin",     0x04000, 0x4000, CRC(06d7e5ca) SHA1(9e06012bcd82f98fad43de666ef9a75979d940ab) ) /* sprites 1 Plane 1-2 */
+	ROM_LOAD( "gg15.bin",     0x08000, 0x4000, CRC(bc1fe02d) SHA1(e3a1421d465b87148ffa94f5673b2307f0246afe) ) /* sprites 2 Plane 1-2 */
+	ROM_LOAD( "gg14.bin",     0x10000, 0x4000, CRC(6aaf12f9) SHA1(207a7407288182a4f3eddaea634c6a6452131182) ) /* sprites 0 Plane 3-4 */
+	ROM_LOAD( "gg13.bin",     0x14000, 0x4000, CRC(e80c3fca) SHA1(cb641c25bb04b970b2cbeca41adb792bbe142fb5) ) /* sprites 1 Plane 3-4 */
+	ROM_LOAD( "gg12.bin",     0x18000, 0x4000, CRC(7780a925) SHA1(3f129ca6d695548b659955fe538584bd9ac2ff17) ) /* sprites 2 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "tbp24s10.14k", 0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "63s141.2e",    0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( makaimur )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10n.rom",      0x04000, 0x4000, CRC(81e567e0) SHA1(2a917e562686e782ea7d034a54e9728695a19258) ) /* 4000-5fff is page 4 */
+	ROM_LOAD( "8n.rom",       0x08000, 0x8000, CRC(9612d66c) SHA1(64c458d6d87b9c339488c9f0c89da2c796fcb759) )
+	ROM_LOAD( "12n.rom",      0x10000, 0x8000, CRC(65a6a97b) SHA1(79de931ae183d8044cb6d9024b475196c679c86c) ) /* page 0, 1, 2, 3 */
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin",      0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1.bin",      0x00000, 0x4000, CRC(ecfccf07) SHA1(0a1518e19a2e0a4cc3dde4b9568202ea911b5ece) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin",     0x00000, 0x4000, CRC(ddd56fa9) SHA1(f9d77eee5e2738b7e83ba02fcc55dd480391479f) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "gg10.bin",     0x04000, 0x4000, CRC(7302529d) SHA1(8434c994cc55d2586641f3b90b6b15fd65dfb67c) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "gg9.bin",      0x08000, 0x4000, CRC(20035bda) SHA1(bbb1fba0eb19471f66d29526fa8423ccb047bd63) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "gg8.bin",      0x0c000, 0x4000, CRC(f12ba271) SHA1(1c42fa02cb27b35d10c3f7f036005e747f9f6b79) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "gg7.bin",      0x10000, 0x4000, CRC(e525207d) SHA1(1947f159189b3a53f1251d8653b6e7c65c91fc3c) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "gg6.bin",      0x14000, 0x4000, CRC(2d77e9b2) SHA1(944da1ce29a18bf0fc8deff78bceacba0bf23a07) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13.n4",     0x00000, 0x4000, CRC(4613afdc) SHA1(13e5a38a134bd7cfa16c63a18fa332c6d66b9345) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "gg16.bin",     0x04000, 0x4000, CRC(06d7e5ca) SHA1(9e06012bcd82f98fad43de666ef9a75979d940ab) ) /* sprites 1 Plane 1-2 */
+	ROM_LOAD( "gg15.bin",     0x08000, 0x4000, CRC(bc1fe02d) SHA1(e3a1421d465b87148ffa94f5673b2307f0246afe) ) /* sprites 2 Plane 1-2 */
+	ROM_LOAD( "gng16.l4",     0x10000, 0x4000, CRC(608d68d5) SHA1(af207f9ee2f93a0cf9cf25cfe72b0fdfe55481b8) ) /* sprites 0 Plane 3-4 */
+	ROM_LOAD( "gg13.bin",     0x14000, 0x4000, CRC(e80c3fca) SHA1(cb641c25bb04b970b2cbeca41adb792bbe142fb5) ) /* sprites 1 Plane 3-4 */
+	ROM_LOAD( "gg12.bin",     0x18000, 0x4000, CRC(7780a925) SHA1(3f129ca6d695548b659955fe538584bd9ac2ff17) ) /* sprites 2 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "tbp24s10.14k", 0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "63s141.2e",    0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( makaimuc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04c.bin",      0x04000, 0x4000, CRC(1294edb1) SHA1(35d3b3ce4ee25d3cfa27097de0c9a2ab5e4892aa) )   /* 4000-5fff is page 4 */
+	ROM_LOAD( "mj03c.bin",      0x08000, 0x8000, CRC(d343332d) SHA1(3edf47ff2bd49b4451b737b6d3eb54256b489c81) )
+	ROM_LOAD( "mj05c.bin",      0x10000, 0x8000, CRC(535342c2) SHA1(5f05a4965476f2db6fddec557d93d12ec1f9750c) )   /* page 0, 1, 2, 3 */
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin",      0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1.bin",      0x00000, 0x4000, CRC(ecfccf07) SHA1(0a1518e19a2e0a4cc3dde4b9568202ea911b5ece) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin",     0x00000, 0x4000, CRC(ddd56fa9) SHA1(f9d77eee5e2738b7e83ba02fcc55dd480391479f) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "gg10.bin",     0x04000, 0x4000, CRC(7302529d) SHA1(8434c994cc55d2586641f3b90b6b15fd65dfb67c) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "gg9.bin",      0x08000, 0x4000, CRC(20035bda) SHA1(bbb1fba0eb19471f66d29526fa8423ccb047bd63) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "gg8.bin",      0x0c000, 0x4000, CRC(f12ba271) SHA1(1c42fa02cb27b35d10c3f7f036005e747f9f6b79) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "gg7.bin",      0x10000, 0x4000, CRC(e525207d) SHA1(1947f159189b3a53f1251d8653b6e7c65c91fc3c) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "gg6.bin",      0x14000, 0x4000, CRC(2d77e9b2) SHA1(944da1ce29a18bf0fc8deff78bceacba0bf23a07) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13.n4",     0x00000, 0x4000, CRC(4613afdc) SHA1(13e5a38a134bd7cfa16c63a18fa332c6d66b9345) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "gg16.bin",     0x04000, 0x4000, CRC(06d7e5ca) SHA1(9e06012bcd82f98fad43de666ef9a75979d940ab) ) /* sprites 1 Plane 1-2 */
+	ROM_LOAD( "gg15.bin",     0x08000, 0x4000, CRC(bc1fe02d) SHA1(e3a1421d465b87148ffa94f5673b2307f0246afe) ) /* sprites 2 Plane 1-2 */
+	ROM_LOAD( "gng16.l4",     0x10000, 0x4000, CRC(608d68d5) SHA1(af207f9ee2f93a0cf9cf25cfe72b0fdfe55481b8) ) /* sprites 0 Plane 3-4 */
+	ROM_LOAD( "gg13.bin",     0x14000, 0x4000, CRC(e80c3fca) SHA1(cb641c25bb04b970b2cbeca41adb792bbe142fb5) ) /* sprites 1 Plane 3-4 */
+	ROM_LOAD( "gg12.bin",     0x18000, 0x4000, CRC(7780a925) SHA1(3f129ca6d695548b659955fe538584bd9ac2ff17) ) /* sprites 2 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "tbp24s10.14k", 0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "63s141.2e",    0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( makaimug )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04g.bin",      0x04000, 0x4000, CRC(757c94d3) SHA1(07f7cf788810a1425016e016ce3579adb3253ac7) )   /* 4000-5fff is page 4 */
+	ROM_LOAD( "mj03g.bin",      0x08000, 0x8000, CRC(61b043bb) SHA1(23a0a17d0abc4b084ffeba90266ef455361771cc) )
+	ROM_LOAD( "mj05g.bin",      0x10000, 0x8000, CRC(f2fdccf5) SHA1(7694a981a6196d77fd2279fc34042b4cfb40c054) )   /* page 0, 1, 2, 3 */
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin",      0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1.bin",      0x00000, 0x4000, CRC(ecfccf07) SHA1(0a1518e19a2e0a4cc3dde4b9568202ea911b5ece) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin",     0x00000, 0x4000, CRC(ddd56fa9) SHA1(f9d77eee5e2738b7e83ba02fcc55dd480391479f) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "gg10.bin",     0x04000, 0x4000, CRC(7302529d) SHA1(8434c994cc55d2586641f3b90b6b15fd65dfb67c) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "gg9.bin",      0x08000, 0x4000, CRC(20035bda) SHA1(bbb1fba0eb19471f66d29526fa8423ccb047bd63) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "gg8.bin",      0x0c000, 0x4000, CRC(f12ba271) SHA1(1c42fa02cb27b35d10c3f7f036005e747f9f6b79) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "gg7.bin",      0x10000, 0x4000, CRC(e525207d) SHA1(1947f159189b3a53f1251d8653b6e7c65c91fc3c) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "gg6.bin",      0x14000, 0x4000, CRC(2d77e9b2) SHA1(944da1ce29a18bf0fc8deff78bceacba0bf23a07) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13.n4",     0x00000, 0x4000, CRC(4613afdc) SHA1(13e5a38a134bd7cfa16c63a18fa332c6d66b9345) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "gg16.bin",     0x04000, 0x4000, CRC(06d7e5ca) SHA1(9e06012bcd82f98fad43de666ef9a75979d940ab) ) /* sprites 1 Plane 1-2 */
+	ROM_LOAD( "gg15.bin",     0x08000, 0x4000, CRC(bc1fe02d) SHA1(e3a1421d465b87148ffa94f5673b2307f0246afe) ) /* sprites 2 Plane 1-2 */
+	ROM_LOAD( "gng16.l4",     0x10000, 0x4000, CRC(608d68d5) SHA1(af207f9ee2f93a0cf9cf25cfe72b0fdfe55481b8) ) /* sprites 0 Plane 3-4 */
+	ROM_LOAD( "gg13.bin",     0x14000, 0x4000, CRC(e80c3fca) SHA1(cb641c25bb04b970b2cbeca41adb792bbe142fb5) ) /* sprites 1 Plane 3-4 */
+	ROM_LOAD( "gg12.bin",     0x18000, 0x4000, CRC(7780a925) SHA1(3f129ca6d695548b659955fe538584bd9ac2ff17) ) /* sprites 2 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "tbp24s10.14k", 0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "63s141.2e",    0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( diamond )
+	ROM_REGION( 0x20000, REGION_CPU1, 0 )
+	ROM_LOAD( "d3o",          0x04000, 0x4000, CRC(ba4bf9f1) SHA1(460e01f5ba9cd0c76d1a2ea1e66e9ad49ef1e13b) ) /* 4000-5fff is page 4 */
+	ROM_LOAD( "d3",           0x08000, 0x8000, CRC(f436d6fa) SHA1(18287ac51e717ea2ba9b307a738f76735120f21b) )
+	ROM_LOAD( "d5o",          0x10000, 0x8000, CRC(ae58bd3a) SHA1(674611c7107cae53150fc249ffc616df891698fe) ) /* page 0, 1, 2, 3 */
+	ROM_LOAD( "d5",           0x18000, 0x8000, CRC(453f3f9e) SHA1(b4dcf2eb0e6d4eca8ccde6e1a60f5e002e49a57b) ) /* is this supposed to be used? */
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "d2",           0x0000, 0x8000, CRC(615f5b6f) SHA1(7ef9ec5c2072e21c787a6bbf700033f50c759c1d) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "d1",           0x00000, 0x4000, CRC(3a24e504) SHA1(56bc38413b8a0dc2829e9c8f7bcfabafe26fd257) ) /* characters */
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "d11",          0x00000, 0x4000, CRC(754357d7) SHA1(eb6e07a5f2d02687306711845001205bf0efa61b) ) /* tiles 0-1 Plane 1*/
+	ROM_LOAD( "d10",          0x04000, 0x4000, CRC(7531edcd) SHA1(dc3eabf7e7503f0588f65620d26c1bc5eebde211) ) /* tiles 2-3 Plane 1*/
+	ROM_LOAD( "d9",           0x08000, 0x4000, CRC(22eeca08) SHA1(6454b6c0a7a0991744386b79d4988a2517ad0636) ) /* tiles 0-1 Plane 2*/
+	ROM_LOAD( "d8",           0x0c000, 0x4000, CRC(6b61be60) SHA1(a92ff6e922da523caec1919f53bea48dab4ca564) ) /* tiles 2-3 Plane 2*/
+	ROM_LOAD( "d7",           0x10000, 0x4000, CRC(fd595274) SHA1(8d22f89a7251ecc8b56ee3f8cfaab2fd5a716b3f) ) /* tiles 0-1 Plane 3*/
+	ROM_LOAD( "d6",           0x14000, 0x4000, CRC(7f51dcd2) SHA1(ff4a68a7a6a5caa558898b03ba4a4dc3ab43ce30) ) /* tiles 2-3 Plane 3*/
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "d17",          0x00000, 0x4000, CRC(8164b005) SHA1(d03bf62734b03c90a8393a23f8ce0a3769c43bf7) ) /* sprites 0 Plane 1-2 */
+	ROM_LOAD( "d14",          0x10000, 0x4000, CRC(6f132163) SHA1(cd1ebf9671bcce58896dadbf20f036eaadbe8bd5) ) /* sprites 0 Plane 3-4 */
+
+	ROM_REGION( 0x0200, REGION_PROMS, 0 )
+	ROM_LOAD( "prom1",        0x0000, 0x0100, CRC(0eaf5158) SHA1(bafd4108708f66cd7b280e47152b108f3e254fc9) )  /* video timing (not used) */
+	ROM_LOAD( "prom2",        0x0100, 0x0100, CRC(4a1285a4) SHA1(5018c3950b675af58db499e2883ecbc55419b491) )  /* priority (not used) */
+ROM_END
+
+ROM_START( gngprincess )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm_c_princess_04", 0x04000, 0x004000, CRC(3b6d9dcf) )
+	ROM_LOAD( "mm_c_princess_03", 0x08000, 0x008000, CRC(134db50c) )
+	ROM_LOAD( "mm_c_princess_05", 0x10000, 0x008000, CRC(d7e126e2) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17princess.bin", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gg14princess.bin", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincessa )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mjg_04princess.10n", 0x04000, 0x004000, CRC(1299e52b) )
+	ROM_LOAD( "mjg_03princess.8n", 0x08000, 0x008000, CRC(be9d1e56) )
+	ROM_LOAD( "mjg_05princess.12n", 0x10000, 0x008000, CRC(f5eb84e6) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_02.14h", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mjg_01p_princess.11e", 0x00000, 0x004000, CRC(4ef3637e) )
+	ROM_IGNORE( 0x004000 )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_08.3e", 0x00000, 0x008000, CRC(c09a716f) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710z_mmg_07.3c", 0x08000, 0x008000, CRC(0b92b129) )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_06.3b", 0x10000, 0x008000, CRC(830176af) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_12p_princess.4n", 0x00000, 0x008000, CRC(f23401c4) )
+	ROM_LOAD( "capsom_m5m23256p_p_620108_mjg_11p_princess.3n", 0x08000, 0x008000, CRC(1ab10e35) )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_10p_princess.4l", 0x10000, 0x008000, CRC(3801cb66) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_09p_princess.3l", 0x18000, 0x008000, CRC(e9edb4bc) )
+ROM_END
+
+ROM_START( gngprincessaenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mjg_04princess.10n", 0x04000, 0x004000, CRC(1299e52b) )
+	ROM_LOAD( "mjg_03princess.8n", 0x08000, 0x008000, CRC(81cb0d2a) )
+	ROM_LOAD( "mjg_05princess.12n", 0x10000, 0x008000, CRC(2caa03e3) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_02.14h", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mjg_01p_princess.11e", 0x00000, 0x004000, CRC(4ef3637e) )
+	ROM_IGNORE( 0x004000 )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_08.3e", 0x00000, 0x008000, CRC(c09a716f) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710z_mmg_07.3c", 0x08000, 0x008000, CRC(0b92b129) )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_06.3b", 0x10000, 0x008000, CRC(830176af) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_12p_princess.4n", 0x00000, 0x008000, CRC(f23401c4) )
+	ROM_LOAD( "capsom_m5m23256p_p_620108_mjg_11p_princess.3n", 0x08000, 0x008000, CRC(1ab10e35) )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_10p_princess.4l", 0x10000, 0x008000, CRC(3801cb66) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_09p_princess.3l", 0x18000, 0x008000, CRC(e9edb4bc) )
+ROM_END
+
+ROM_START( gngprincessb )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4princess.bin", 0x04000, 0x004000, CRC(1299e52b) )
+	ROM_LOAD( "gg3princess.bin", 0x08000, 0x008000, CRC(be9d1e56) )
+	ROM_LOAD( "gg5princess.bin", 0x10000, 0x008000, CRC(f5eb84e6) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17princess.bin", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gg14princess.bin", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincessbenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4princess.bin", 0x04000, 0x004000, CRC(1299e52b) )
+	ROM_LOAD( "gg3princess.bin", 0x08000, 0x008000, CRC(81cb0d2a) )
+	ROM_LOAD( "gg5princess.bin", 0x10000, 0x008000, CRC(2caa03e3) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17princess.bin", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gg14princess.bin", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincessc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gngprincess.n10", 0x04000, 0x004000, CRC(36e043ad) )
+	ROM_LOAD( "gng.n9", 0x08000, 0x004000, CRC(b6b91cfb) )
+	ROM_LOAD( "gngprincess.n8", 0x0c000, 0x004000, CRC(bd17085c) )
+	ROM_LOAD( "gng.n13", 0x10000, 0x004000, CRC(fd9a8dda) )
+	ROM_LOAD( "gngprincess.n12", 0x14000, 0x004000, CRC(5199ea50) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17princess.bin", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gg14princess.bin", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincesscenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gngprincess.n10", 0x04000, 0x004000, CRC(36e043ad) )
+	ROM_LOAD( "gngprincess.n9", 0x08000, 0x004000, CRC(3632f7f5) )
+	ROM_LOAD( "gngprincess.n8", 0x0c000, 0x004000, CRC(393780fd) )
+	ROM_LOAD( "gng.n13", 0x10000, 0x004000, CRC(fd9a8dda) )
+	ROM_LOAD( "gngprincess.n12", 0x14000, 0x004000, CRC(98ce9232) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17princess.bin", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gg14princess.bin", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincessenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm_c_princess_04", 0x04000, 0x004000, CRC(3b6d9dcf) )
+	ROM_LOAD( "mm_c_princess_03", 0x08000, 0x008000, CRC(a5921aeb) )
+	ROM_LOAD( "mm_c_princess_05", 0x10000, 0x008000, CRC(d1542dec) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17princess.bin", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gg14princess.bin", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincesst )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mmt04dprincess.10n", 0x04000, 0x004000, CRC(11dd8836) )
+	ROM_LOAD( "mmt03dprincess.8n", 0x08000, 0x008000, CRC(9ff8665c) )
+	ROM_LOAD( "mmt05dprincess.13n", 0x10000, 0x008000, CRC(7e06e90f) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm01princess.11e", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mm17princess.4n", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "mm16princess.3n", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "mm15princess.1n", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "mm14princess.4l", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "mm13princess.3l", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "mm12princess.1l", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( gngprincesstenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mmt04dprincess.10n", 0x04000, 0x004000, CRC(11dd8836) )
+	ROM_LOAD( "mmt03dprincess.8n", 0x08000, 0x008000, CRC(b57e52d7) )
+	ROM_LOAD( "mmt05dprincess.13n", 0x10000, 0x008000, CRC(e4ee3423) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm01princess.11e", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mm17princess.4n", 0x00000, 0x004000, CRC(e2043162) )
+	ROM_LOAD( "mm16princess.3n", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "mm15princess.1n", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "mm14princess.4l", 0x10000, 0x004000, CRC(19847a61) )
+	ROM_LOAD( "mm13princess.3l", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "mm12princess.1l", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincess )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10nprincess.rom", 0x04000, 0x004000, CRC(49dc2d12) )
+	ROM_LOAD( "8nprincess.rom", 0x08000, 0x008000, CRC(ff005be0) )
+	ROM_LOAD( "12nprincess.rom", 0x10000, 0x008000, CRC(7c2064ca) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13princess.n4", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gng16princess.l4", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincessb )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04bprincess.10n", 0x04000, 0x004000, CRC(3084ed7d) )
+	ROM_LOAD( "mj03bprincess.8n", 0x08000, 0x008000, CRC(b80cae7a) )
+	ROM_LOAD( "mj05bprincess.12n", 0x10000, 0x008000, CRC(6f8d3556) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mj01princess.11e", 0x00000, 0x004000, CRC(824ae0fc) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mj17princess.4n", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "mj16princess.3n", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "mj15princess.1n", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "mj14princess.4l", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "mj13princess.3l", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "mj12princess.1l", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincessbenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04bprincess.10n", 0x04000, 0x004000, CRC(3084ed7d) )
+	ROM_LOAD( "mj03bprincess.8n", 0x08000, 0x008000, CRC(de44ac2d) )
+	ROM_LOAD( "mj05bprincess.12n", 0x10000, 0x008000, CRC(7aefa8a0) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mj01princess.11e", 0x00000, 0x004000, CRC(824ae0fc) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mj17princess.4n", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "mj16princess.3n", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "mj15princess.1n", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "mj14princess.4l", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "mj13princess.3l", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "mj12princess.1l", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincessc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04cprincess.bin", 0x04000, 0x004000, CRC(daada743) )
+	ROM_LOAD( "mj03cprincess.bin", 0x08000, 0x008000, CRC(7d0909cf) )
+	ROM_LOAD( "mj05cprincess.bin", 0x10000, 0x008000, CRC(0c9ed2e0) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13princess.n4", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gng16princess.l4", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincesscenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04cprincess.bin", 0x04000, 0x004000, CRC(daada743) )
+	ROM_LOAD( "mj03cprincess.bin", 0x08000, 0x008000, CRC(16fe9d4a) )
+	ROM_LOAD( "mj05cprincess.bin", 0x10000, 0x008000, CRC(0547b319) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13princess.n4", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gng16princess.l4", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincessenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10nprincess.rom", 0x04000, 0x004000, CRC(49dc2d12) )
+	ROM_LOAD( "8nprincess.rom", 0x08000, 0x008000, CRC(b526a64b) )
+	ROM_LOAD( "12nprincess.rom", 0x10000, 0x008000, CRC(1abdbe3e) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13princess.n4", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gng16princess.l4", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincessg )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04gprincess.bin", 0x04000, 0x004000, CRC(bd45de21) )
+	ROM_LOAD( "mj03gprincess.bin", 0x08000, 0x008000, CRC(e6bbe084) )
+	ROM_LOAD( "mj05gprincess.bin", 0x10000, 0x008000, CRC(cd6ce99c) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13princess.n4", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gng16princess.l4", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+ROM_START( makprincessgenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04gprincess.bin", 0x04000, 0x004000, CRC(bd45de21) )
+	ROM_LOAD( "mj03gprincess.bin", 0x08000, 0x008000, CRC(20b5aeeb) )
+	ROM_LOAD( "mj05gprincess.bin", 0x10000, 0x008000, CRC(21288a1b) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x000000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1princess.bin", 0x00000, 0x004000, CRC(7935494f) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13princess.n4", 0x00000, 0x004000, CRC(07c9138a) )
+	ROM_LOAD( "gg16princess.bin", 0x04000, 0x004000, CRC(1ad1d899) )
+	ROM_LOAD( "gg15princess.bin", 0x08000, 0x004000, CRC(439d6e7b) )
+	ROM_LOAD( "gng16princess.l4", 0x10000, 0x004000, CRC(3cc87995) )
+	ROM_LOAD( "gg13princess.bin", 0x14000, 0x004000, CRC(05e0c809) )
+	ROM_LOAD( "gg12princess.bin", 0x18000, 0x004000, CRC(28fe68a2) )
+ROM_END
+
+
+
+ROM_START( gngmaiden )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm_c_maiden_04", 0x04000, 0x004000, CRC(269b5163) )
+	ROM_LOAD( "mm_c_maiden_03", 0x08000, 0x008000, CRC(57f4f653) )
+	ROM_LOAD( "mm_c_maiden_05", 0x10000, 0x008000, CRC(4f443f38) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17maiden.bin", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gg14maiden.bin", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknight )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm_c_knight_04", 0x04000, 0x004000, CRC(b96e18c0) )
+	ROM_LOAD( "mm_c_knight_03", 0x08000, 0x008000, CRC(57f4f653) )
+	ROM_LOAD( "mm_c_knight_05", 0x10000, 0x008000, CRC(a8a1a2e7) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17knight.bin", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gg14knight.bin", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaidena )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mjg_04maiden.10n", 0x04000, 0x004000, CRC(0f6f2987) )
+	ROM_LOAD( "mjg_03maiden.8n", 0x08000, 0x008000, CRC(640d7ece) )
+	ROM_LOAD( "mjg_05maiden.12n", 0x10000, 0x008000, CRC(ee23a024) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mjg_01m.11e", 0x00000, 0x004000, CRC(25ee616c) )
+	ROM_IGNORE( 0x004000 )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_08.3e", 0x00000, 0x008000, CRC(c09a716f) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710z_mmg_07.3c", 0x08000, 0x008000, CRC(0b92b129) )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_06.3b", 0x10000, 0x008000, CRC(830176af) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_12m.4n", 0x00000, 0x008000, CRC(8abd05fb) )
+	ROM_LOAD( "capsom_m5m23256p_p_620108_mjg_11m.3n", 0x08000, 0x008000, CRC(839fd6c7) )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_10m.4l", 0x10000, 0x008000, CRC(90ec9bb3) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_09m.3l", 0x18000, 0x008000, CRC(d8339187) )
+
+ROM_END
+
+ROM_START( gngknighta )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mjg_04knight.10n", 0x04000, 0x004000, CRC(909a6024) )
+	ROM_LOAD( "mjg_03knight.8n", 0x08000, 0x008000, CRC(640d7ece) )
+	ROM_LOAD( "mjg_05knight.12n", 0x10000, 0x008000, CRC(3171a979) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mjg_01k.11e", 0x00000, 0x004000, CRC(b1c81db0) )
+	ROM_IGNORE( 0x004000 )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_08.3e", 0x00000, 0x008000, CRC(c09a716f) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710z_mmg_07.3c", 0x08000, 0x008000, CRC(0b92b129) )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_06.3b", 0x10000, 0x008000, CRC(830176af) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_12k.4n", 0x00000, 0x008000, CRC(b194b07b) )
+	ROM_LOAD( "capsom_m5m23256p_p_620108_mjg_11k.3n", 0x08000, 0x008000, CRC(18f3881e) )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_10k.4l", 0x10000, 0x008000, CRC(25063871) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_09k.3l", 0x18000, 0x008000, CRC(30133354) )
+
+ROM_END
+
+ROM_START( gngmaidenb )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4maiden.bin", 0x04000, 0x004000, CRC(0f6f2987) )
+	ROM_LOAD( "gg3maiden.bin", 0x08000, 0x008000, CRC(640d7ece) )
+	ROM_LOAD( "gg5maiden.bin", 0x10000, 0x008000, CRC(39f2dd21) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17maiden.bin", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gg14maiden.bin", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknightb )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4knight.bin", 0x04000, 0x004000, CRC(909a6024) )
+	ROM_LOAD( "gg3knight.bin", 0x08000, 0x008000, CRC(640d7ece) )
+	ROM_LOAD( "gg5knight.bin", 0x10000, 0x008000, CRC(58239e38) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17knight.bin", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gg14knight.bin", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaidenc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gngmaiden.n10", 0x04000, 0x004000, CRC(093b73e4) )
+	ROM_LOAD( "gngmaiden.n9", 0x08000, 0x004000, CRC(510a7603) )
+	ROM_LOAD( "gng.n8", 0x0c000, 0x004000, CRC(a5cfa928) )
+	ROM_LOAD( "gng.n13", 0x10000, 0x004000, CRC(fd9a8dda) )
+	ROM_LOAD( "gngmaiden.n12", 0x14000, 0x004000, CRC(f718826f) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17maiden.bin", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gg14maiden.bin", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknightc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gngknight.n10", 0x04000, 0x004000, CRC(96ce3a47) )
+	ROM_LOAD( "gngknight.n9", 0x08000, 0x004000, CRC(510a7603) )
+	ROM_LOAD( "gng.n8", 0x0c000, 0x004000, CRC(a5cfa928) )
+	ROM_LOAD( "gng.n13", 0x10000, 0x004000, CRC(fd9a8dda) )
+	ROM_LOAD( "gngknight.n12", 0x14000, 0x004000, CRC(e8f3e1a4) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17knight.bin", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gg14knight.bin", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaident )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mmt04dmaiden.10n", 0x04000, 0x004000, CRC(0c2b449a) )
+	ROM_LOAD( "mmt03dmaiden.8n", 0x08000, 0x008000, CRC(9d2c4776) )
+	ROM_LOAD( "mmt05dmaiden.13n", 0x10000, 0x008000, CRC(72fc7fb1) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm01maiden.11e", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mm17maiden.4n", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "mm16maiden.3n", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "mm15maiden.1n", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "mm14maiden.4l", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "mm13maiden.3l", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "mm12maiden.1l", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknightt )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mmt04dknight.10n", 0x04000, 0x004000, CRC(93de0d39) )
+	ROM_LOAD( "mmt03dknight.8n", 0x08000, 0x008000, CRC(9d2c4776) )
+	ROM_LOAD( "mmt05dknight.13n", 0x10000, 0x008000, CRC(45fa0f5e) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm01knight.11e", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mm17knight.4n", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "mm16knight.3n", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "mm15knight.1n", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "mm14knight.4l", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "mm13knight.3l", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "mm12knight.1l", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaiden )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10nmaiden.rom", 0x04000, 0x004000, CRC(6f73c922) )
+	ROM_LOAD( "8nmaiden.rom", 0x08000, 0x008000, CRC(28546c2b) )
+	ROM_LOAD( "12nmaiden.rom", 0x10000, 0x008000, CRC(6c900fa5) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13maiden.n4", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gng16maiden.l4", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknight )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10nknight.rom", 0x04000, 0x004000, CRC(f0868081) )
+	ROM_LOAD( "8nknight.rom", 0x08000, 0x008000, CRC(28546c2b) )
+	ROM_LOAD( "12nknight.rom", 0x10000, 0x008000, CRC(0d414cbc) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13knight.n4", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gng16knight.l4", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaidenb )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04bmaiden.10n", 0x04000, 0x004000, CRC(162b094d) )
+	ROM_LOAD( "mj03bmaiden.8n", 0x08000, 0x008000, CRC(1b42aeb0) )
+	ROM_LOAD( "mj05bmaiden.12n", 0x10000, 0x008000, CRC(0cb218b9) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mj01maiden.11e", 0x00000, 0x004000, CRC(799d53ab) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mj17maiden.4n", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "mj16maiden.3n", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "mj15maiden.1n", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "mj14maiden.4l", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "mj13maiden.3l", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "mj12maiden.1l", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightb )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04bknight.10n", 0x04000, 0x004000, CRC(89de40ee) )
+	ROM_LOAD( "mj03bknight.8n", 0x08000, 0x008000, CRC(1b42aeb0) )
+	ROM_LOAD( "mj05bknight.12n", 0x10000, 0x008000, CRC(6d635ba0) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mj01knight.11e", 0x00000, 0x004000, CRC(3a527a50) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mj17knight.4n", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "mj16knight.3n", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "mj15knight.1n", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "mj14knight.4l", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "mj13knight.3l", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "mj12knight.1l", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaidenc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04cmaiden.bin", 0x04000, 0x004000, CRC(fc024373) )
+	ROM_LOAD( "mj03cmaiden.bin", 0x08000, 0x008000, CRC(30bebacc) )
+	ROM_LOAD( "mj05cmaiden.bin", 0x10000, 0x008000, CRC(f38f3e47) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13maiden.n4", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gng16maiden.l4", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightc )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04cknight.bin", 0x04000, 0x004000, CRC(63f70ad0) )
+	ROM_LOAD( "mj03cknight.bin", 0x08000, 0x008000, CRC(30bebacc) )
+	ROM_LOAD( "mj05cknight.bin", 0x10000, 0x008000, CRC(2cdd371a) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13knight.n4", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gng16knight.l4", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaideng )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04gmaiden.bin", 0x04000, 0x004000, CRC(9bea3a11) )
+	ROM_LOAD( "mj03gmaiden.bin", 0x08000, 0x008000, CRC(be25618e) )
+	ROM_LOAD( "mj05gmaiden.bin", 0x10000, 0x008000, CRC(f44b608b) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13maiden.n4", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gng16maiden.l4", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightg )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04gknight.bin", 0x04000, 0x004000, CRC(041f73b2) )
+	ROM_LOAD( "mj03gknight.bin", 0x08000, 0x008000, CRC(be25618e) )
+	ROM_LOAD( "mj05gknight.bin", 0x10000, 0x008000, CRC(4539fc09) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13knight.n4", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gng16knight.l4", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaidenenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm_c_maiden_04", 0x04000, 0x004000, CRC(269b5163) )
+	ROM_LOAD( "mm_c_maiden_03enh", 0x08000, 0x008000, CRC(e12b59b4) )
+	ROM_LOAD( "mm_c_maiden_05enh", 0x10000, 0x008000, CRC(204f0a26) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17maiden.bin", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gg14maiden.bin", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknightenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mm_c_knight_04", 0x04000, 0x004000, CRC(b96e18c0) )
+	ROM_LOAD( "mm_c_knight_03enh", 0x08000, 0x008000, CRC(e12b59b4) )
+	ROM_LOAD( "mm_c_knight_05enh", 0x10000, 0x008000, CRC(73eba0df) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17knight.bin", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gg14knight.bin", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaidenaenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mjg_04maiden.10n", 0x04000, 0x004000, CRC(0f6f2987) )
+	ROM_LOAD( "mjg_03maidenenh.8n", 0x08000, 0x008000, CRC(5b5b6db2) )
+	ROM_LOAD( "mjg_05maidenenh.12n", 0x10000, 0x008000, CRC(f9a86b65) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mjg_01m.11e", 0x00000, 0x004000, CRC(25ee616c) )
+	ROM_IGNORE( 0x004000 )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_08.3e", 0x00000, 0x008000, CRC(c09a716f) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710z_mmg_07.3c", 0x08000, 0x008000, CRC(0b92b129) )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_06.3b", 0x10000, 0x008000, CRC(830176af) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_12m.4n", 0x00000, 0x008000, CRC(8abd05fb) )
+	ROM_LOAD( "capsom_m5m23256p_p_620108_mjg_11m.3n", 0x08000, 0x008000, CRC(839fd6c7) )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_10m.4l", 0x10000, 0x008000, CRC(90ec9bb3) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_09m.3l", 0x18000, 0x008000, CRC(d8339187) )
+
+ROM_END
+
+ROM_START( gngknightaenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mjg_04knight.10n", 0x04000, 0x004000, CRC(909a6024) )
+	ROM_LOAD( "mjg_03knightenh.8n", 0x08000, 0x008000, CRC(5b5b6db2) )
+	ROM_LOAD( "mjg_05knightenh.12n", 0x10000, 0x008000, CRC(9879287c) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mjg_01k.11e", 0x00000, 0x004000, CRC(b1c81db0) )
+	ROM_IGNORE( 0x004000 )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_08.3e", 0x00000, 0x008000, CRC(c09a716f) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710z_mmg_07.3c", 0x08000, 0x008000, CRC(0b92b129) )
+	ROM_LOAD( "capsom_m5m23256p_p_616105_mmg_06.3b", 0x10000, 0x008000, CRC(830176af) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_12k.4n", 0x00000, 0x008000, CRC(b194b07b) )
+	ROM_LOAD( "capsom_m5m23256p_p_620108_mjg_11k.3n", 0x08000, 0x008000, CRC(18f3881e) )
+	ROM_LOAD( "capsom_m5m23256p_p_62410p_mjg_10k.4l", 0x10000, 0x008000, CRC(25063871) )
+	ROM_LOAD( "capsom_m5m23256p_p_61710g_mjg_09k.3l", 0x18000, 0x008000, CRC(30133354) )
+
+ROM_END
+
+ROM_START( gngmaidenbenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4maiden.bin", 0x04000, 0x004000, CRC(0f6f2987) )
+	ROM_LOAD( "gg3maidenenh.bin", 0x08000, 0x008000, CRC(5b5b6db2) )
+	ROM_LOAD( "gg5maidenenh.bin", 0x10000, 0x008000, CRC(e5450ca5) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17maiden.bin", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gg14maiden.bin", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknightbenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gg4knight.bin", 0x04000, 0x004000, CRC(909a6024) )
+	ROM_LOAD( "gg3knightenh.bin", 0x08000, 0x008000, CRC(5b5b6db2) )
+	ROM_LOAD( "gg5knightenh.bin", 0x10000, 0x008000, CRC(676d3bba) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17knight.bin", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gg14knight.bin", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaidencenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gngmaiden.n10", 0x04000, 0x004000, CRC(093b73e4) )
+	ROM_LOAD( "gngmaidenenh.n9", 0x08000, 0x004000, CRC(d1819d0d) )
+	ROM_LOAD( "gngenh.n8", 0x0c000, 0x004000, CRC(21ef2189) )
+	ROM_LOAD( "gng.n13", 0x10000, 0x004000, CRC(fd9a8dda) )
+	ROM_LOAD( "gngmaidenenh.n12", 0x14000, 0x004000, CRC(735ab04a) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17maiden.bin", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gg14maiden.bin", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknightcenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "gngknight.n10", 0x04000, 0x004000, CRC(96ce3a47) )
+	ROM_LOAD( "gngknightenh.n9", 0x08000, 0x004000, CRC(d1819d0d) )
+	ROM_LOAD( "gngenh.n8", 0x0c000, 0x004000, CRC(21ef2189) )
+	ROM_LOAD( "gng.n13", 0x10000, 0x004000, CRC(fd9a8dda) )
+	ROM_LOAD( "gngknightenh.n12", 0x14000, 0x004000, CRC(ac08b917) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gg17knight.bin", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gg14knight.bin", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( gngmaidentenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mmt04dmaiden.10n", 0x04000, 0x004000, CRC(0c2b449a) )
+	ROM_LOAD( "mmt03dmaidenenh.8n", 0x08000, 0x008000, CRC(b7aa73fd) )
+	ROM_LOAD( "mmt05dmaidenenh.13n", 0x10000, 0x008000, CRC(17ecb80a) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm01maiden.11e", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mm17maiden.4n", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "mm16maiden.3n", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "mm15maiden.1n", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "mm14maiden.4l", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "mm13maiden.3l", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "mm12maiden.1l", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( gngknighttenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mmt04dknight.10n", 0x04000, 0x004000, CRC(93de0d39) )
+	ROM_LOAD( "mmt03dknightenh.8n", 0x08000, 0x008000, CRC(b7aa73fd) )
+	ROM_LOAD( "mmt05dknightenh.13n", 0x10000, 0x008000, CRC(20eac8e5) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm01knight.11e", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mm17knight.4n", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "mm16knight.3n", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "mm15knight.1n", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "mm14knight.4l", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "mm13knight.3l", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "mm12knight.1l", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaidenenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10nmaiden.rom", 0x04000, 0x004000, CRC(6f73c922) )
+	ROM_LOAD( "8nmaidenenh.rom", 0x08000, 0x008000, CRC(62729180) )
+	ROM_LOAD( "12nmaidenenh.rom", 0x10000, 0x008000, CRC(12d72a16) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13maiden.n4", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gng16maiden.l4", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "10nknight.rom", 0x04000, 0x004000, CRC(f0868081) )
+	ROM_LOAD( "8nknightenh.rom", 0x08000, 0x008000, CRC(62729180) )
+	ROM_LOAD( "12nknightenh.rom", 0x10000, 0x008000, CRC(7306690f) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13knight.n4", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gng16knight.l4", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaidenbenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04bmaiden.10n", 0x04000, 0x004000, CRC(162b094d) )
+	ROM_LOAD( "mj03bmaidenenh.8n", 0x08000, 0x008000, CRC(7d0aace7) )
+	ROM_LOAD( "mj05bmaidenenh.12n", 0x10000, 0x008000, CRC(19d0854f) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mj01maiden.11e", 0x00000, 0x004000, CRC(799d53ab) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mj17maiden.4n", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "mj16maiden.3n", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "mj15maiden.1n", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "mj14maiden.4l", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "mj13maiden.3l", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "mj12maiden.1l", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightbenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04bknight.10n", 0x04000, 0x004000, CRC(89de40ee) )
+	ROM_LOAD( "mj03bknightenh.8n", 0x08000, 0x008000, CRC(7d0aace7) )
+	ROM_LOAD( "mj05bknightenh.12n", 0x10000, 0x008000, CRC(7801c656) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "mm02.14h", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "mj01knight.11e", 0x00000, 0x004000, CRC(3a527a50) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "mm11.3e", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "mm10.1e", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "mm09.3c", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "mm08.1c", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "mm07.3b", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "mm06.1b", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "mj17knight.4n", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "mj16knight.3n", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "mj15knight.1n", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "mj14knight.4l", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "mj13knight.3l", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "mj12knight.1l", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaidencenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04cmaiden.bin", 0x04000, 0x004000, CRC(fc024373) )
+	ROM_LOAD( "mj03cmaidenenh.bin", 0x08000, 0x008000, CRC(5b492e49) )
+	ROM_LOAD( "mj05cmaidenenh.bin", 0x10000, 0x008000, CRC(12909b5c) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13maiden.n4", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gng16maiden.l4", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightcenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04cknight.bin", 0x04000, 0x004000, CRC(63f70ad0) )
+	ROM_LOAD( "mj03cknightenh.bin", 0x08000, 0x008000, CRC(5b492e49) )
+	ROM_LOAD( "mj05cknightenh.bin", 0x10000, 0x008000, CRC(97c1416c) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13knight.n4", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gng16knight.l4", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+ROM_START( makmaidengenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04gmaiden.bin", 0x04000, 0x004000, CRC(9bea3a11) )
+	ROM_LOAD( "mj03gmaidenenh.bin", 0x08000, 0x008000, CRC(782b2fe1) )
+	ROM_LOAD( "mj05gmaidenenh.bin", 0x10000, 0x008000, CRC(51027e5b) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1maiden.bin", 0x00000, 0x004000, CRC(82e2fa18) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13maiden.n4", 0x00000, 0x004000, CRC(9fb0faaf) )
+	ROM_LOAD( "gg16maiden.bin", 0x04000, 0x004000, CRC(cbf803e7) )
+	ROM_LOAD( "gg15maiden.bin", 0x08000, 0x004000, CRC(d6827437) )
+	ROM_LOAD( "gng16maiden.l4", 0x10000, 0x004000, CRC(2eeb6ef5) )
+	ROM_LOAD( "gg13maiden.bin", 0x14000, 0x004000, CRC(ca6622c1) )
+	ROM_LOAD( "gg12maiden.bin", 0x18000, 0x004000, CRC(83f8a22c) )
+
+ROM_END
+
+ROM_START( makknightgenh )
+	ROM_REGION( 0x18000, REGION_CPU1, 0 )
+	ROM_LOAD( "mj04gknight.bin", 0x04000, 0x004000, CRC(041f73b2) )
+	ROM_LOAD( "mj03gknightenh.bin", 0x08000, 0x008000, CRC(782b2fe1) )
+	ROM_LOAD( "mj05gknightenh.bin", 0x10000, 0x008000, CRC(20c9884f) )
+
+	ROM_REGION( 0x10000, REGION_CPU2, 0 )
+	ROM_LOAD( "gg2.bin", 0x00000, 0x008000, CRC(615f5b6f) )
+
+	ROM_REGION( 0x04000, REGION_GFX1, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg1knight.bin", 0x00000, 0x004000, CRC(c12dd3e3) )
+
+	ROM_REGION( 0x18000, REGION_GFX2, ROMREGION_DISPOSE )
+	ROM_LOAD( "gg11.bin", 0x00000, 0x004000, CRC(ddd56fa9) )
+	ROM_LOAD( "gg10.bin", 0x04000, 0x004000, CRC(7302529d) )
+	ROM_LOAD( "gg9.bin", 0x08000, 0x004000, CRC(20035bda) )
+	ROM_LOAD( "gg8.bin", 0x0c000, 0x004000, CRC(f12ba271) )
+	ROM_LOAD( "gg7.bin", 0x10000, 0x004000, CRC(e525207d) )
+	ROM_LOAD( "gg6.bin", 0x14000, 0x004000, CRC(2d77e9b2) )
+
+	ROM_REGION( 0x20000, REGION_GFX3, ROMREGION_DISPOSE | ROMREGION_ERASEFF )
+	ROM_LOAD( "gng13knight.n4", 0x00000, 0x004000, CRC(a0713571) )
+	ROM_LOAD( "gg16knight.bin", 0x04000, 0x004000, CRC(731dddc3) )
+	ROM_LOAD( "gg15knight.bin", 0x08000, 0x004000, CRC(4b9933df) )
+	ROM_LOAD( "gng16knight.l4", 0x10000, 0x004000, CRC(01d9a306) )
+	ROM_LOAD( "gg13knight.bin", 0x14000, 0x004000, CRC(d3cfe1f8) )
+	ROM_LOAD( "gg12knight.bin", 0x18000, 0x004000, CRC(7c6e8878) )
+
+ROM_END
+
+
+static READ8_HANDLER( diamond_hack_r )
+{
+	return 0;
+}
+
+static DRIVER_INIT( diamond )
+{
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x6000, 0x6000, 0, 0, diamond_hack_r);
+}
+
+
+
+GAME( 1985, gng,	  0,   gng, gng,	  0,	   ROT0, "Capcom", "Ghosts'n Goblins (World? set 1)", 0 )
+GAME( 1985, gnga,	  gng, gng, gng,	  0,	   ROT0, "Capcom", "Ghosts'n Goblins (World? set 2)", 0 )
+GAME( 1985, gngt,	  gng, gng, gng,	  0,	   ROT0, "Capcom (Taito America license)", "Ghosts'n Goblins (US)", 0 )
+GAME( 1985, makaimur, gng, gng, makaimur, 0,	   ROT0, "Capcom", "Makai-Mura (Japan)", 0 )
+GAME( 1985, makaimuc, gng, gng, makaimur, 0,	   ROT0, "Capcom", "Makai-Mura (Japan Revision C)", 0 )
+GAME( 1985, makaimug, gng, gng, makaimur, 0,	   ROT0, "Capcom", "Makai-Mura (Japan Revision G)", 0 )
+/*
+ * Ghosts'n Goblins - Princess Prin Prin Edition (+ Enhanced Gameplay Edition)
+ * Romhack by GoodLuckTrying (Wolfric) & Poody
+ * https://romhackplaza.org/romhacks/ghostsn-goblins-princess-prin-prin-edition-enhanced-gameplay-edition-arcade-romhack
+ *
+ * Sprite and gameplay hack changing Arthur into Princess Prin Prin and vice versa.
+ * Most enemies have been changed into monster girls.
+ * Enhanced Edition introduces fluid crouching and smooth ladder climbing.
+ */
+GAME( 2026, gngprincess, gng, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (World? 1)", GAME_STANDALONE )
+GAME( 2026, gngprincessa, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (World? 2)", 0 )
+GAME( 2026, gngprincessaenh, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (Enhanced) (World? 2)", 0 )
+GAME( 2026, gngprincessb, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (World? 3)", 0 )
+GAME( 2026, gngprincessbenh, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (Enhanced) (World? 3)", 0 )
+GAME( 2026, gngprincessc, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (World? 4)", 0 )
+GAME( 2026, gngprincesscenh, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (Enhanced) (World? 4)", 0 )
+GAME( 2026, gngprincessenh, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (Enhanced) (World? 1)", 0 )
+GAME( 2026, gngprincesst, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (US)", 0 )
+GAME( 2026, gngprincesstenh, gngprincess, gng, gng, 0, ROT0, "GoodLuckTrying", "Ghosts'n Goblins - Princess Prin Prin Edition (Enhanced) (US)", 0 )
+GAME( 2026, makprincess, gng, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition", GAME_STANDALONE )
+GAME( 2026, makprincessb, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Japan revision B)", 0 )
+GAME( 2026, makprincessbenh, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Enhanced) (Japan revision B)", 0 )
+GAME( 2026, makprincessc, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Japan revision C)", 0 )
+GAME( 2026, makprincesscenh, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Enhanced) (Japan revision C)", 0 )
+GAME( 2026, makprincessenh, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Enhanced)", 0 )
+GAME( 2026, makprincessg, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Japan revision G)", 0 )
+GAME( 2026, makprincessgenh, makprincess, gng, makaimur, 0, ROT0, "GoodLuckTrying", "Makaimura - Princess Prin Prin Edition (Enhanced) (Japan revision G)", 0 )
+/*
+ * Ghosts'n Goblins - Knight/Maiden Artoria Edition (+ Enhanced Gameplay Edition)
+ * Romhack by GoodLuckTrying (Wolfric) & Poody
+ * https://romhackplaza.org/romhacks/ghostsn-goblins-knightmaiden-artoria-edition-enhanced-gameplay-edition-arcade-romhack
+ *
+ * Sprite and gameplay hack changing Arthur into Artoria (Knight or Maiden).
+ * Enhanced Edition introduces fluid crouching and smooth ladder climbing.
+ */
+GAME( 2026, gngmaiden, gng, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (World? 1)", GAME_STANDALONE )
+GAME( 2026, gngknight, gng, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (World? 1)", GAME_STANDALONE )
+GAME( 2026, gngmaidena, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (World? 2)", 0 )
+GAME( 2026, gngknighta, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (World? 2)", 0 )
+GAME( 2026, gngmaidenb, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (World? 3)", 0 )
+GAME( 2026, gngknightb, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (World? 3)", 0 )
+GAME( 2026, gngmaidenc, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (World? 4)", 0 )
+GAME( 2026, gngknightc, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (World? 4)", 0 )
+GAME( 2026, gngmaident, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (US)", 0 )
+GAME( 2026, gngknightt, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (US)", 0 )
+GAME( 2026, makmaiden, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition", 0 )
+GAME( 2026, makknight, gng, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition", GAME_STANDALONE )
+GAME( 2026, makmaidenb, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Japan revision B)", 0 )
+GAME( 2026, makknightb, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Japan revision B)", 0 )
+GAME( 2026, makmaidenc, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Japan revision C)", 0 )
+GAME( 2026, makknightc, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Japan revision C)", 0 )
+GAME( 2026, makmaideng, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Japan revision G)", 0 )
+GAME( 2026, makknightg, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Japan revision G)", 0 )
+GAME( 2026, gngmaidenenh, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (Enhanced) (World? 1)", 0 )
+GAME( 2026, gngknightenh, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (Enhanced) (World? 1)", 0 )
+GAME( 2026, gngmaidenaenh, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (Enhanced) (World? 2)", 0 )
+GAME( 2026, gngknightaenh, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (Enhanced) (World? 2)", 0 )
+GAME( 2026, gngmaidenbenh, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (Enhanced) (World? 3)", 0 )
+GAME( 2026, gngknightbenh, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (Enhanced) (World? 3)", 0 )
+GAME( 2026, gngmaidencenh, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (Enhanced) (World? 4)", 0 )
+GAME( 2026, gngknightcenh, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (Enhanced) (World? 4)", 0 )
+GAME( 2026, gngmaidentenh, gngmaiden, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Maiden Artoria Edition (Enhanced) (US)", 0 )
+GAME( 2026, gngknighttenh, gngknight, gng, gng, 0, ROT0, "GoodLuckTrying / Poody", "Ghosts'n Goblins - Knight Artoria Edition (Enhanced) (US)", 0 )
+GAME( 2026, makmaidenenh, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Enhanced)", 0 )
+GAME( 2026, makknightenh, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Enhanced)", 0 )
+GAME( 2026, makmaidenbenh, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Enhanced) (Japan revision B)", 0 )
+GAME( 2026, makknightbenh, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Enhanced) (Japan revision B)", 0 )
+GAME( 2026, makmaidencenh, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Enhanced) (Japan revision C)", 0 )
+GAME( 2026, makknightcenh, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Enhanced) (Japan revision C)", 0 )
+GAME( 2026, makmaidengenh, gngmaiden, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Maiden Artoria Edition (Enhanced) (Japan revision G)", 0 )
+GAME( 2026, makknightgenh, gngknight, gng, makaimur, 0, ROT0, "GoodLuckTrying / Poody", "Makaimura - Knight Artoria Edition (Enhanced) (Japan revision G)", 0 )
+GAME( 1989, diamond,  0,   gng, diamond,  diamond, ROT0, "KH Video", "Diamond Run", 0 )
+

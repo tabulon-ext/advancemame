@@ -1,3 +1,5 @@
+// license:BSD-3-Clause
+// copyright-holders:Paul Leaman
 /***************************************************************************
 
   Capcom System 1
@@ -22,7 +24,8 @@ merged Street Fighter Zero for MESS
 
 #define GAME(YEAR,NAME,PARENT,MACHINE,INPUT,INIT,MONITOR,COMPANY,FULLNAME,FLAGS)
 
-#include "drivers/cps1.c"
+/* Include the shared driver explicitly; its GAME entries are suppressed above. */
+#include "../../mame/drivers/cps1.c"
 
 /* this is to keep GCC from whining about unused statics */
 int dummy_function(void)

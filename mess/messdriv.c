@@ -1,3 +1,5 @@
+// license:BSD-3-Clause
+// copyright-holders:Nathan Woods
 /******************************************************************************
 
   messdriv.c
@@ -37,22 +39,6 @@ game_driver driver_0 =
 };
 
 #endif
-
-#ifdef TINY_COMPILE
-extern const game_driver TINY_NAME;
-
-const game_driver * const drivers[] =
-{
-  TINY_POINTER,
-  0             /* end of array */
-};
-
-const game_driver * const test_drivers[] =
-{
-	0	/* end of array */
-};
-
-#else
 
 #ifndef DRIVER_RECURSIVE
 
@@ -790,6 +776,7 @@ TESTDRIVER( svi328c ) 	/* SVI-328 + 80 column card (Swedish)						*/
 
 	/* Telenova */
 	DRIVER(compis)		/* 1985 Telenova Compis								*/
+	DRIVER(compis2)		/* 1986 Telenova Compis II							*/
 
 	/* Multitech */
 	DRIVER(mpf1)		/* 1979 Multitech Micro Professor 1					*/
@@ -826,5 +813,3 @@ TESTDRIVER( mk1 )		/* Chess Champion MK I								*/
 TESTDRIVER( ssystem3 )	/* Chess Champion Super System III / MK III			*/
 
 #endif /* DRIVER_RECURSIVE */
-
-#endif /* TINY_COMPILE */

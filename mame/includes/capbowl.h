@@ -1,0 +1,20 @@
+// license:BSD-3-Clause
+// copyright-holders:Zsolt Vasvari
+/*************************************************************************
+
+    Coors Light Bowling/Bowl-O-Rama hardware
+
+*************************************************************************/
+
+/*----------- defined in vidhrdw/capbowl.c -----------*/
+
+VIDEO_START( capbowl );
+VIDEO_UPDATE( capbowl );
+
+extern UINT8 *capbowl_rowaddress;
+
+WRITE8_HANDLER( bowlrama_blitter_w );
+READ8_HANDLER( bowlrama_blitter_r );
+
+WRITE8_HANDLER( capbowl_tms34061_w );
+READ8_HANDLER( capbowl_tms34061_r );

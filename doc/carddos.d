@@ -2,10 +2,10 @@ Name{number}
 	carddos - Supported DOS Video Cards
 
 	This is the list of the DOS video cards supported
-	by the Advance programs with the DOS drivers. 
+	by the Advance programs with the DOS drivers.
 
 	Please note that not all the OEM cards are listed. If your card has a
-	supported chipset, it's probably supported also if the OEM vendor is not
+	supported chipset, it's probably supported even if the OEM vendor is not
 	in the list.
 
 	Please note that some laptop video cards work only when connected to
@@ -14,7 +14,7 @@ Name{number}
 SubIndex
 
 SVGALINE Drivers
-	The `svgaline' drivers are a subset of the Linux SVGALIB library.
+	The `svgaline` drivers are a subset of the Linux SVGALIB library.
 
   ATI Technologies (1002)
 	+Fire GL X2 [414b] 
@@ -1719,7 +1719,7 @@ VBELINE Drivers
 	+86CM65 Aurora64V+ [8812] 
 
 Information
-	This list is automatically generated from the `pcidevs.txt' and `pci.ids'
+	This list is automatically generated from the `pcidevs.txt` and `pci.ids`
 	files available at:
 
 		+http://members.datafast.net.au/dft0802/downloads/pcidevs.txt

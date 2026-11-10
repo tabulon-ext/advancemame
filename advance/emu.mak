@@ -61,7 +61,7 @@ ADVANCECFLAGS += \
 	-DUSE_SOUND_SDL \
 	-DUSE_KEYBOARD_SDL \
 	-DUSE_MOUSE_SDL \
-	-DUSE_JOYSTICK_SDL 
+	-DUSE_JOYSTICK_SDL
 ADVANCELIBS += $(SDLLIBS)
 ADVANCEOBJS += \
 	$(OBJ)/advance/sdl/ssdl.o \
@@ -164,11 +164,11 @@ ADVANCECFLAGS += \
 	-DUSE_ADV_SVGALIB_DOS \
 	-I$(srcdir)/advance/dos \
 	-I$(srcdir)/advance/card \
-	-I$(srcdir)/advance/svgalib \
-	-I$(srcdir)/advance/svgalib/clockchi \
-	-I$(srcdir)/advance/svgalib/ramdac \
-	-I$(srcdir)/advance/svgalib/drivers \
-	-I$(srcdir)/advance/svgalib/svgados
+	-I$(srcdir)/alien/svgalib \
+	-I$(srcdir)/alien/svgalib/clockchi \
+	-I$(srcdir)/alien/svgalib/ramdac \
+	-I$(srcdir)/alien/svgalib/drivers \
+	-I$(srcdir)/alien/svgalib/svgados
 ADVANCECFLAGS += \
 	-DUSE_VIDEO_SVGALINE -DUSE_VIDEO_VBELINE -DUSE_VIDEO_VGALINE -DUSE_VIDEO_VBE -DUSE_VIDEO_NONE \
 	-DUSE_SOUND_ALLEGRO -DUSE_SOUND_SEAL -DUSE_SOUND_VSYNC -DUSE_SOUND_NONE \
@@ -315,11 +315,11 @@ ADVANCEOBJDIRS += \
 	$(OBJ)/advance/svgalib/svgawin
 ADVANCECFLAGS += \
 	-DUSE_ADV_SVGALIB_WIN \
-	-I$(srcdir)/advance/svgalib \
-	-I$(srcdir)/advance/svgalib/clockchi \
-	-I$(srcdir)/advance/svgalib/ramdac \
-	-I$(srcdir)/advance/svgalib/drivers \
-	-I$(srcdir)/advance/svgalib/svgawin \
+	-I$(srcdir)/alien/svgalib \
+	-I$(srcdir)/alien/svgalib/clockchi \
+	-I$(srcdir)/alien/svgalib/ramdac \
+	-I$(srcdir)/alien/svgalib/drivers \
+	-I$(srcdir)/alien/svgalib/svgawin \
 	-DUSE_VIDEO_SVGAWIN
 ADVANCEOBJS += \
 	$(OBJ)/advance/windows/vsvgawin.o \
@@ -393,8 +393,13 @@ endif
 
 # Dependencies on VERSION/DATADIR/SYSCONFDIR
 $(OBJ)/advance/osd/emu.o: Makefile
+$(OBJ)/advance/osd/video.o: $(srcdir)/advance/osd/startup.dat
+$(OBJ)/advance/osd/video.o: $(srcdir)/advance/osd/blitmax.dat
+$(OBJ)/advance/linux/jevent.o: $(srcdir)/advance/linux/joverride.dat
+$(OBJ)/advance/linux/file.o: Makefile
 $(OBJ)/advance/osd/ui.o: Makefile
 $(MESSOBJ)/advance/osd/emu.o: Makefile
+$(MESSOBJ)/advance/linux/file.o: Makefile
 $(MESSOBJ)/advance/osd/ui.o: Makefile
 
 ADVANCECFLAGS += -DADV_VERSION=\"$(VERSION)\" -DADV_EMU
@@ -426,6 +431,11 @@ MESSOBJS += \
 	$(sort $(MESSCPUOBJS)) \
 	$(sort $(MESSSOUNDOBJS))
 
+ifeq ($(CONF_DEBUGGER),yes)
+MAMEOBJS += $(sort $(DBGOBJS))
+MESSOBJS += $(sort $(MESSDBGOBJS))
+endif
+
 ADVANCEOBJS += \
 	$(OBJ)/advance/osd/emu.o \
 	$(OBJ)/advance/osd/glue.o \
@@ -449,19 +459,28 @@ ADVANCEOBJS += \
 	$(OBJ)/advance/osd/fileio.o \
 	$(OBJ)/advance/osd/fuzzy.o \
 	$(OBJ)/advance/blit/blit.o \
-	$(OBJ)/advance/blit/hq2x.o \
-	$(OBJ)/advance/blit/hq2x3.o \
-	$(OBJ)/advance/blit/hq2x4.o \
-	$(OBJ)/advance/blit/hq3x.o \
-	$(OBJ)/advance/blit/hq4x.o \
 	$(OBJ)/advance/blit/xbr2x.o \
+	$(OBJ)/advance/blit/xbr2x_sse.o \
+	$(OBJ)/advance/blit/xbr2x_neon.o \
 	$(OBJ)/advance/blit/xbr3x.o \
+	$(OBJ)/advance/blit/xbr3x_sse.o \
+	$(OBJ)/advance/blit/xbr3x_neon.o \
 	$(OBJ)/advance/blit/xbr4x.o \
+	$(OBJ)/advance/blit/xbr4x_sse.o \
+	$(OBJ)/advance/blit/xbr4x_neon.o \
 	$(OBJ)/advance/blit/scale2x.o \
+	$(OBJ)/advance/blit/scale2x_sse.o \
+	$(OBJ)/advance/blit/scale2x_neon.o \
 	$(OBJ)/advance/blit/scale3x.o \
 	$(OBJ)/advance/blit/scale2k.o \
+	$(OBJ)/advance/blit/scale2k_sse.o \
+	$(OBJ)/advance/blit/scale2k_neon.o \
 	$(OBJ)/advance/blit/scale3k.o \
+	$(OBJ)/advance/blit/scale3k_sse.o \
+	$(OBJ)/advance/blit/scale3k_neon.o \
 	$(OBJ)/advance/blit/scale4k.o \
+	$(OBJ)/advance/blit/scale4k_sse.o \
+	$(OBJ)/advance/blit/scale4k_neon.o \
 	$(OBJ)/advance/blit/interp.o \
 	$(OBJ)/advance/blit/clear.o \
 	$(OBJ)/advance/blit/slice.o \
@@ -511,19 +530,48 @@ ADVANCEOBJS += \
 	$(OBJ)/advance/lib/error.o \
 	$(OBJ)/advance/lib/wave.o
 
-EMUCHDMANOBJS += \
-	$(OBJ)/chdman.o \
-	$(OBJ)/chd.o \
-	$(OBJ)/cdrom.o \
-	$(OBJ)/chdcd.o \
-	$(OBJ)/sha1.o \
-	$(OBJ)/md5.o \
-	$(OBJ)/version.o
+############################################################################
+# libchdr
+
+LIBCHDRCFLAGS = \
+	-I$(srcdir)/alien/libchdr/include \
+	-DCHDR_SYSTEM_ZLIB \
+	-DCHDR_SYSTEM_ZSTD
+
+LIBCHDR_OBJS = \
+	$(OBJ)/alien/libchdr/src/libchdr_bitstream.o \
+	$(OBJ)/alien/libchdr/src/libchdr_cdrom.o \
+	$(OBJ)/alien/libchdr/src/libchdr_chd.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_avhuff.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_cdfl.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_cdlz.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_cdzl.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_cdzs.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_flac.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_huff.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_lzma.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_zlib.o \
+	$(OBJ)/alien/libchdr/src/libchdr_codec_zstd.o \
+	$(OBJ)/alien/libchdr/src/libchdr_flac.o \
+	$(OBJ)/alien/libchdr/src/libchdr_huffman.o
+
+$(OBJ)/advance/libchdr.a: $(LIBCHDR_OBJS)
+	$(ECHO) $@
+	$(RM) $@
+	$(AR) crs $@ $^
+
+CFLAGS += \
+	-I$(srcdir)/alien/libchdr/include
+ADVANCEOBJDIRS += \
+	$(OBJ)/alien/libchdr \
+	$(OBJ)/alien/libchdr/src
+ADVANCEBUILDLIBS += \
+	$(OBJ)/advance/libchdr.a
 
 ############################################################################
 # expat
 
-$(OBJ)/advance/libexpat.a: $(OBJ)/advance/expat/xmlparse.o $(OBJ)/advance/expat/xmlrole.o $(OBJ)/advance/expat/xmltok.o
+$(OBJ)/advance/libexpat.a: $(OBJ)/alien/expat/xmlparse.o $(OBJ)/alien/expat/xmlrole.o $(OBJ)/alien/expat/xmltok.o
 	$(ECHO) $@
 	$(AR) crs $@ $^
 
@@ -531,9 +579,9 @@ ifeq ($(CONF_LIB_EXPAT),yes)
 ADVANCELIBS += -lexpat
 else
 CFLAGS += \
-	-I$(srcdir)/advance/expat
+	-I$(srcdir)/alien/expat
 ADVANCEOBJDIRS += \
-	$(OBJ)/advance/expat
+	$(OBJ)/alien/expat
 ADVANCEBUILDLIBS += \
 	$(OBJ)/advance/libexpat.a
 endif
@@ -541,24 +589,112 @@ endif
 ############################################################################
 # zlib
 
-$(OBJ)/advance/libz.a: $(OBJ)/advance/zlib/adler32.o $(OBJ)/advance/zlib/crc32.o $(OBJ)/advance/zlib/deflate.o \
-	$(OBJ)/advance/zlib/inffast.o $(OBJ)/advance/zlib/inflate.o \
-	$(OBJ)/advance/zlib/infback.o $(OBJ)/advance/zlib/inftrees.o $(OBJ)/advance/zlib/trees.o \
-	$(OBJ)/advance/zlib/zutil.o $(OBJ)/advance/zlib/uncompr.o $(OBJ)/advance/zlib/compress.o
+$(OBJ)/advance/libz.a: $(OBJ)/alien/zlib/adler32.o $(OBJ)/alien/zlib/crc32.o $(OBJ)/alien/zlib/deflate.o \
+	$(OBJ)/alien/zlib/inffast.o $(OBJ)/alien/zlib/inflate.o \
+	$(OBJ)/alien/zlib/infback.o $(OBJ)/alien/zlib/inftrees.o $(OBJ)/alien/zlib/trees.o \
+	$(OBJ)/alien/zlib/zutil.o $(OBJ)/alien/zlib/uncompr.o $(OBJ)/alien/zlib/compress.o
 	$(ECHO) $@
 	$(AR) crs $@ $^
 
 ifeq ($(CONF_LIB_ZLIB),yes)
 ADVANCELIBS += -lz
-EMUCHDMANLDFLAGS += -lz
 else
 CFLAGS += \
-	-I$(srcdir)/advance/zlib
+	-I$(srcdir)/alien/zlib
 ADVANCEOBJDIRS += \
-	$(OBJ)/advance/zlib
+	$(OBJ)/alien/zlib
 ADVANCEBUILDLIBS += \
 	$(OBJ)/advance/libz.a
 endif
+
+############################################################################
+# sljit
+
+$(OBJ)/advance/libsljit.a: $(OBJ)/alien/sljit/sljit_mame.o
+	$(ECHO) $@
+	$(AR) crs $@ $^
+
+CFLAGS += \
+	-I$(srcdir)/alien/sljit
+ADVANCEOBJDIRS += \
+	$(OBJ)/alien/sljit
+ADVANCEBUILDLIBS += \
+	$(OBJ)/advance/libsljit.a
+
+############################################################################
+# nanojpeg
+
+$(OBJ)/advance/libnanojpeg.a: $(OBJ)/alien/nanojpeg/nanojpeg.o
+	$(ECHO) $@
+	$(AR) crs $@ $^
+
+CFLAGS += \
+	-I$(srcdir)/alien/nanojpeg
+ADVANCEOBJDIRS += \
+	$(OBJ)/alien/nanojpeg
+ADVANCEBUILDLIBS += \
+	$(OBJ)/advance/libnanojpeg.a
+
+############################################################################
+# lzma
+
+LZMACFLAGS = -I$(srcdir)/alien/lzma -I$(srcdir)/alien/lzma/include
+
+LZMA_OBJS = \
+	$(OBJ)/alien/lzma/src/LzmaDec.o
+
+$(OBJ)/advance/liblzma.a: $(LZMA_OBJS)
+	$(ECHO) $@
+	$(RM) $@
+	$(AR) crs $@ $^
+
+CFLAGS += \
+	-I$(srcdir)/alien/lzma/include
+ADVANCEOBJDIRS += \
+	$(OBJ)/alien/lzma \
+	$(OBJ)/alien/lzma/src
+ADVANCEBUILDLIBS += \
+	$(OBJ)/advance/liblzma.a
+
+############################################################################
+# zstd
+
+ZSTDCFLAGS = -I$(srcdir)/alien/zstd
+
+ZSTD_OBJS = \
+	$(OBJ)/alien/zstd/zstddeclib.o
+
+$(OBJ)/advance/libzstd.a: $(ZSTD_OBJS)
+	$(ECHO) $@
+	$(RM) $@
+	$(AR) crs $@ $^
+
+CFLAGS += \
+	-I$(srcdir)/alien/zstd
+ADVANCEOBJDIRS += \
+	$(OBJ)/alien/zstd
+ADVANCEBUILDLIBS += \
+	$(OBJ)/advance/libzstd.a
+
+############################################################################
+# dr_flac
+
+DRFLACCFLAGS = -I$(srcdir)/alien/dr_flac
+
+DRFLAC_OBJS = \
+	$(OBJ)/alien/dr_flac/dr_flac.o
+
+$(OBJ)/advance/libdrflac.a: $(DRFLAC_OBJS)
+	$(ECHO) $@
+	$(RM) $@
+	$(AR) crs $@ $^
+
+CFLAGS += \
+	-I$(srcdir)/alien/dr_flac
+ADVANCEOBJDIRS += \
+	$(OBJ)/alien/dr_flac
+ADVANCEBUILDLIBS += \
+	$(OBJ)/advance/libdrflac.a
 
 ############################################################################
 # advance compile
@@ -568,6 +704,26 @@ $(OBJ)/advance/osd/%.o: $(srcdir)/advance/osd/%.c $(srcdir)/advance/osd/emu.h
 	$(CC) $(CFLAGS) $(EMUCFLAGS) $(MAMECFLAGS) $(ADVANCECFLAGS) -c $< -o $@
 
 $(OBJ)/advance/%.o: $(srcdir)/advance/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) -c $< -o $@
+
+$(OBJ)/alien/libchdr/%.o: $(srcdir)/alien/libchdr/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(LIBCHDRCFLAGS) -c $< -o $@
+
+$(OBJ)/alien/lzma/%.o: $(srcdir)/alien/lzma/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(LZMACFLAGS) -c $< -o $@
+
+$(OBJ)/alien/zstd/%.o: $(srcdir)/alien/zstd/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(ZSTDCFLAGS) -c $< -o $@
+
+$(OBJ)/alien/dr_flac/%.o: $(srcdir)/alien/dr_flac/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(DRFLACCFLAGS) -c $< -o $@
+
+$(OBJ)/alien/%.o: $(srcdir)/alien/%.c
 	$(ECHO) $@ $(MSG)
 	$(CC) $(CFLAGS) $(ADVANCECFLAGS) -c $< -o $@
 
@@ -583,6 +739,26 @@ $(MESSOBJ)/advance/%.o: $(srcdir)/advance/%.c
 	$(ECHO) $@ $(MSG)
 	$(CC) $(CFLAGS) $(ADVANCECFLAGS) -c $< -o $@
 
+$(MESSOBJ)/alien/libchdr/%.o: $(srcdir)/alien/libchdr/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(LIBCHDRCFLAGS) -c $< -o $@
+
+$(MESSOBJ)/alien/lzma/%.o: $(srcdir)/alien/lzma/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(LZMACFLAGS) -c $< -o $@
+
+$(MESSOBJ)/alien/zstd/%.o: $(srcdir)/alien/zstd/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(ZSTDCFLAGS) -c $< -o $@
+
+$(MESSOBJ)/alien/dr_flac/%.o: $(srcdir)/alien/dr_flac/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) $(DRFLACCFLAGS) -c $< -o $@
+
+$(MESSOBJ)/alien/%.o: $(srcdir)/alien/%.c
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(ADVANCECFLAGS) -c $< -o $@
+
 $(MESSOBJ)/advance/%.o: $(srcdir)/advance/%.rc
 	$(ECHO) $@ $(MSG)
 	$(RC) $(RCFLAGS) -DADV_EMU $< -o $@
@@ -591,17 +767,10 @@ $(MESSOBJ)/advance/%.o: $(srcdir)/advance/%.rc
 # emu compile
 
 # Target CFLAGS
-ifneq (,$(findstring USE_ASM_INLINE,$(CFLAGS)))
 # Don't enable internam MAME assembler macros
 # There are issues in the z80 emulator when using modern gcc compilers like 6.4.0
 # For example, puckman/pengo games have video issues.
 #EMUCFLAGS += -DX86_ASM
-endif
-
-ifneq (,$(findstring USE_ASM_EMUMIPS3,$(CFLAGS)))
-# Don't enable MIPS3 DRC otherwise various games crash. Like biofreak, blitz, calspeed, carnevil, kinst and others...
-#X86_MIPS3_DRC=1
-endif
 
 ifneq (,$(findstring USE_LSB,$(CFLAGS)))
 EMUCFLAGS += -DLSB_FIRST
@@ -626,29 +795,23 @@ ADVANCELDFLAGS += -Xlinker -Map -Xlinker $(OBJ)/advmame.map
 endif
 
 # MAME
-include $(srcdir)/src/core.mak
-ifeq ($(CONF_TINY),yes)
-include $(srcdir)/src/tiny.mak
-else
-include $(srcdir)/src/mame.mak
-endif
-include $(srcdir)/src/cpu/cpu.mak
-include $(srcdir)/src/sound/sound.mak
+include $(srcdir)/mame/core.mak
+include $(srcdir)/mame/cpu/cpu.mak
+include $(srcdir)/mame/sound/sound.mak
+$(eval $(call EMU_CORE,,$(OBJ),mame))
+include $(srcdir)/mame/mame.mak
+$(eval $(call EMU_CPU,,$(OBJ),mame))
+$(eval $(call EMU_SOUND,,$(OBJ),mame))
 
 # MESS
-include $(srcdir)/srcmess/core.mak
-ifeq ($(CONF_TINY),yes)
-include $(srcdir)/mess/tinyms.mak
-else
+$(eval $(call EMU_CORE,MESS,$(MESSOBJ),mess))
 include $(srcdir)/mess/mess.mak
-endif
-include $(srcdir)/srcmess/cpu/cpu.mak
-include $(srcdir)/mess/cpu/cpu.mak
-include $(srcdir)/srcmess/sound/sound.mak
+$(eval $(call EMU_CPU,MESS,$(MESSOBJ),mess))
+$(eval $(call EMU_SOUND,MESS,$(MESSOBJ),mess))
 include $(srcdir)/mess/sound/sound.mak
 
 # Special search paths required by the CPU core rules
-VPATH=$(wildcard $(srcdir)/src/cpu/* $(srcdir)/src/sound)
+VPATH=$(wildcard $(srcdir)/mame/cpu/* $(srcdir)/mame/sound)
 
 OBJDIRS += \
 	$(ADVANCEOBJDIRS) \
@@ -676,17 +839,15 @@ MESSOBJDIRS += \
 	$(MESSOBJ)/mess/vidhrdw \
 	$(MESSOBJ)/mess/sndhrdw \
 	$(MESSOBJ)/mess/formats \
-	$(MESSOBJ)/mess/tools \
-	$(MESSOBJ)/mess/tools/dat2html \
-	$(MESSOBJ)/mess/tools/mkhdimg \
-	$(MESSOBJ)/mess/tools/messroms \
-	$(MESSOBJ)/mess/tools/imgtool \
-	$(MESSOBJ)/mess/tools/mkimage \
 	$(MESSOBJ)/mess/sound \
 	$(MESSOBJ)/mess/cpu
 
 ifeq ($(CONF_DEBUGGER),yes)
+# CPU instruction hooks are defined in these headers; rebuild cores when they change.
+$(sort $(CPUOBJS)): $(srcdir)/mame/debugger.h
+$(sort $(MESSCPUOBJS)): $(srcdir)/mame/debugger.h
 EMUDEFS += -DMAME_DEBUG
+EMUCFLAGS += -DMAME_DEBUG
 else
 # don't include the debug only modules
 DBGOBJS =
@@ -695,25 +856,40 @@ endif
 
 MAMECFLAGS += \
 	$(EMUCFLAGS) \
-	-I$(srcdir)/src \
-	-I$(srcdir)/src/includes \
-	-I$(srcdir)/src/debug \
+	-I$(srcdir)/mame \
+	-I$(srcdir)/mame/includes \
+	-I$(srcdir)/mame/debug \
 	-I$(OBJ)/cpu/m68000 \
-	-I$(srcdir)/src/cpu/m68000
+	-I$(srcdir)/mame/cpu/m68000
 
 MESSCFLAGS += \
 	$(EMUCFLAGS) \
-	-I$(srcdir)/srcmess \
-	-I$(srcdir)/srcmess/includes \
-	-I$(srcdir)/srcmess/debug \
 	-I$(MESSOBJ)/cpu/m68000 \
-	-I$(srcdir)/srcmess/cpu/m68000
+	-I$(srcdir)/mame \
+	-I$(srcdir)/mame/includes \
+	-I$(srcdir)/mame/debug \
+	-I$(srcdir)/mame/cpu/m68000
 
 MAMEDEFS += $(EMUDEFS) $(COREDEFS) $(CPUDEFS) $(SOUNDDEFS) $(ASMDEFS)
 MESSDEFS += $(EMUDEFS) $(MESSCOREDEFS) $(MESSCPUDEFS) $(MESSSOUNDDEFS) $(MESSASMDEFS)
 
 MAMELIBS += $(EMULIBS) $(DRVLIBS)
 MESSLIBS += $(EMULIBS) $(MESSDRVLIBS)
+
+# Only opt in sources whose quoted-include dependencies have also been checked.
+# Static pattern rules keep the existing MESS object paths and flags, without
+# allowing VPATH to choose a different source.
+MESS_SHARED_SOURCES = md5.c sha1.c
+MESS_SHARED_OBJS = $(addprefix $(MESSOBJ)/,$(MESS_SHARED_SOURCES:.c=.o))
+MAME_SHARED_OBJS = $(addprefix $(OBJ)/,$(MESS_SHARED_SOURCES:.c=.o))
+
+$(MAME_SHARED_OBJS): $(OBJ)/%.o: $(srcdir)/mame/%.c $(srcdir)/advance/emu.mak
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(MAMECFLAGS) $(MAMEDEFS) -c $< -o $@
+
+$(MESS_SHARED_OBJS): $(MESSOBJ)/%.o: $(srcdir)/mame/%.c $(srcdir)/advance/emu.mak
+	$(ECHO) $@ $(MSG)
+	$(CC) $(CFLAGS) $(MESSCFLAGS) $(MESSDEFS) -c $< -o $@
 
 $(OBJ)/advmame$(EXE): $(sort $(OBJDIRS)) $(ADVANCEOBJS) $(MAMEOBJS) $(MAMELIBS) $(ADVANCEBUILDLIBS)
 	$(ECHO) $@ $(MSG)
@@ -729,11 +905,7 @@ else
 	$(LN_S) $(OBJ)/advmame$(EXE) advmame$(EXE)
 endif
 
-$(OBJ)/chdman$(EXE): $(EMUCHDMANOBJS) $(EMUCHDMANLIBS)
-	$(ECHO) $@ $(MSG)
-	$(LD) $(EMUCHDMANOBJS) $(EMUCHDMANLDFLAGS) $(LDFLAGS) $(EMUCHDMANLIBS) $(LIBS) -o $@
-
-$(OBJ)/%.o: $(srcdir)/src/%.c
+$(OBJ)/%.o: $(srcdir)/mame/%.c
 	$(ECHO) $@ $(MSG)
 	$(CC) $(CFLAGS) $(MAMECFLAGS) $(MAMEDEFS) -c $< -o $@
 
@@ -745,10 +917,10 @@ $(subst .c,.o,$(M68000_GENERATED_FILES)): $(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BU
 # Additional rule, because m68kcpu.c includes the generated m68kops.h
 $(OBJ)/cpu/m68000/m68kcpu.o: $(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD)
 
-$(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD): $(srcdir)/src/cpu/m68000/m68kmake.c
+$(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD): $(srcdir)/mame/cpu/m68000/m68kmake.c $(srcdir)/mame/cpu/m68000/m68k_in.c
 	$(ECHO) $@
 	$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD) -o $(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD) $<
-	@$(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD) $(OBJ)/cpu/m68000 $(srcdir)/src/cpu/m68000/m68k_in.c
+	@$(OBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD) $(OBJ)/cpu/m68000 $(srcdir)/mame/cpu/m68000/m68k_in.c
 
 $(OBJ)/%.a:
 	$(ECHO) $@
@@ -765,7 +937,7 @@ $(sort $(OBJDIRS)):
 
 MESSADVANCEOBJS = $(subst $(OBJ),$(MESSOBJ),$(ADVANCEOBJS))
 
-$(MESSOBJ)/advmess$(EXE): $(sort $(MESSOBJDIRS)) $(MESSADVANCEOBJS) $(MESSOBJS) $(MESSLIBS) $(ADVANCEBUILDLIBS) 
+$(MESSOBJ)/advmess$(EXE): $(sort $(MESSOBJDIRS)) $(MESSADVANCEOBJS) $(MESSOBJS) $(MESSLIBS) $(ADVANCEBUILDLIBS)
 	$(ECHO) $@ $(MSG)
 	$(LD) $(MESSADVANCEOBJS) $(MESSOBJS) $(ADVANCELDFLAGS) $(LDFLAGS) $(MESSLIBS) $(ADVANCEBUILDLIBS) $(ADVANCELIBS) $(LIBS) -o $@
 ifeq ($(CONF_PERF),yes)
@@ -779,7 +951,8 @@ else
 	$(LN_S) $(MESSOBJ)/advmess$(EXE) advmess$(EXE)
 endif
 
-$(MESSOBJ)/%.o: $(srcdir)/srcmess/%.c
+# Compile shared sources with target-specific flags and object paths.
+$(MESSOBJ)/%.o: $(srcdir)/mame/%.c $(srcdir)/advance/emu.mak
 	$(ECHO) $@ $(MSG)
 	$(CC) $(CFLAGS) $(MESSCFLAGS) $(MESSDEFS) -c $< -o $@
 
@@ -795,10 +968,10 @@ $(subst .c,.o,$(MESSM68000_GENERATED_FILES)): $(MESSOBJ)/cpu/m68000/m68kmake$(EX
 # Additional rule, because m68kcpu.c includes the generated m68kops.h
 $(MESSOBJ)/cpu/m68000/m68kcpu.o: $(MESSOBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD)
 
-$(MESSOBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD): $(srcdir)/srcmess/cpu/m68000/m68kmake.c
+$(MESSOBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD): $(srcdir)/mame/cpu/m68000/m68kmake.c $(srcdir)/mame/cpu/m68000/m68k_in.c
 	$(ECHO) $@
 	$(CC_FOR_BUILD) $(CFLAGS_FOR_BUILD) -o $(MESSOBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD) $<
-	@$(MESSOBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD) $(MESSOBJ)/cpu/m68000 $(srcdir)/src/cpu/m68000/m68k_in.c
+	@$(MESSOBJ)/cpu/m68000/m68kmake$(EXE_FOR_BUILD) $(MESSOBJ)/cpu/m68000 $(srcdir)/mame/cpu/m68000/m68k_in.c
 
 $(MESSOBJ)/%.a:
 	$(ECHO) $@
@@ -812,22 +985,6 @@ $(MESSOBJ):
 $(sort $(MESSOBJDIRS)):
 	$(ECHO) $@
 	$(MD) $@
-
-############################################################################
-# EMU diff
-
-mamedif:
-	find src \( -name "*.orig" -o -name "*.ori" -o -name "*.rej" -o -name "*~" -o -name "*.bak" \)
-	-diff -U 5 --new-file --recursive src.ori src > advance/advmame.dif
-	ls -l advance/advmame.dif
-
-messdif:
-	find srcmess \( -name "*.orig" -o -name "*.ori" -o -name "*.rej" -o -name "*~" -o -name "*.bak" \)
-	-diff -U 5 --new-file --recursive srcmess.ori srcmess > advance/advmess.dif
-	ls -l advance/advmess.dif
-	find mess \( -name "*.orig" -o -name "*.ori" -o -name "*.rej" -o -name "*~" -o -name "*.bak" \)
-	-diff -U 5 --new-file --recursive mess.ori mess > advance/mess.dif
-	ls -l advance/mess.dif
 
 ############################################################################
 # EMU dist
@@ -861,6 +1018,7 @@ EMU_SUPPORT_SRC += \
 	$(srcdir)/support/sysinfo.dat  \
 	$(srcdir)/support/cheat.dat  \
 	$(srcdir)/support/category.ini \
+	$(srcdir)/support/genre.ini \
 	$(srcdir)/support/advmess.1 \
 	$(srcdir)/support/advmessv.bat \
 	$(srcdir)/support/advmessc.bat \
@@ -1020,7 +1178,8 @@ EMU_ROOT_BIN += \
 	$(srcdir)/support/hiscore.dat \
 	$(srcdir)/support/sysinfo.dat \
 	$(srcdir)/support/cheat.dat \
-	$(srcdir)/support/category.ini
+	$(srcdir)/support/category.ini \
+	$(srcdir)/support/genre.ini
 ifeq ($(CONF_SYSTEM),unix)
 EMU_ROOT_BIN += \
 	$(VOBJ)/advv$(EXE) \
@@ -1060,8 +1219,8 @@ ifeq ($(CONF_LIB_DIRECT),yes)
 EMU_ROOT_BIN += \
 	$(VOBJ)/advv$(EXE) \
 	$(CFGOBJ)/advcfg$(EXE) \
-	$(srcdir)/advance/svgalib/svgawin/driver/svgawin.sys \
-	$(srcdir)/advance/svgalib/svgawin/install/svgawin.exe \
+	$(srcdir)/alien/svgalib/svgawin/driver/svgawin.sys \
+	$(srcdir)/alien/svgalib/svgawin/install/svgawin.exe \
 	$(srcdir)/support/advmessv.bat \
 	$(srcdir)/support/advmessc.bat \
 	$(srcdir)/support/advmenuv.bat \
@@ -1106,26 +1265,27 @@ dist: $(DOCOBJ)/readme.txt $(DOCOBJ)/release.txt $(DOCOBJ)/history.txt $(DOCOBJ)
 	cp $(BLIT_SRC) $(EMU_DIST_DIR_SRC)/advance/blit
 	mkdir $(EMU_DIST_DIR_SRC)/advance/card
 	cp $(CARD_SRC) $(EMU_DIST_DIR_SRC)/advance/card
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib
-	cp $(SVGALIB_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/clockchi
-	cp $(SVGALIBCLOCKCHI_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/clockchi
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/ramdac
-	cp $(SVGALIBRAMDAC_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/ramdac
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/drivers
-	cp $(SVGALIBDRIVERS_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/drivers
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/svgados
-	cp $(SVGALIBSVGADOS_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/svgados
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin
-	cp $(SVGALIBSVGAWIN_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin/sys
-	cp $(SVGALIBSVGAWINSYS_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin/sys
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin/install
-	cp $(SVGALIBSVGAWININSTALL_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin/install
-	mkdir $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin/driver
-	cp $(SVGALIBSVGAWINDRIVER_SRC) $(EMU_DIST_DIR_SRC)/advance/svgalib/svgawin/driver
-	mkdir $(EMU_DIST_DIR_SRC)/advance/mpglib
-	cp $(MPGLIB_SRC) $(EMU_DIST_DIR_SRC)/advance/mpglib
+	mkdir $(EMU_DIST_DIR_SRC)/alien
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib
+	cp $(SVGALIB_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/clockchi
+	cp $(SVGALIBCLOCKCHI_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/clockchi
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/ramdac
+	cp $(SVGALIBRAMDAC_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/ramdac
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/drivers
+	cp $(SVGALIBDRIVERS_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/drivers
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/svgados
+	cp $(SVGALIBSVGADOS_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/svgados
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin
+	cp $(SVGALIBSVGAWIN_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin/sys
+	cp $(SVGALIBSVGAWINSYS_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin/sys
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin/install
+	cp $(SVGALIBSVGAWININSTALL_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin/install
+	mkdir $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin/driver
+	cp $(SVGALIBSVGAWINDRIVER_SRC) $(EMU_DIST_DIR_SRC)/alien/svgalib/svgawin/driver
+	mkdir $(EMU_DIST_DIR_SRC)/alien/mpglib
+	cp $(MPGLIB_SRC) $(EMU_DIST_DIR_SRC)/alien/mpglib
 	mkdir $(EMU_DIST_DIR_SRC)/advance/v
 	cp $(V_SRC) $(EMU_DIST_DIR_SRC)/advance/v
 	mkdir $(EMU_DIST_DIR_SRC)/advance/k
@@ -1146,16 +1306,37 @@ dist: $(DOCOBJ)/readme.txt $(DOCOBJ)/release.txt $(DOCOBJ)/history.txt $(DOCOBJ)
 	cp $(LINE_SRC) $(EMU_DIST_DIR_SRC)/advance/line
 	mkdir $(EMU_DIST_DIR_SRC)/advance/d2
 	cp $(D2_SRC) $(EMU_DIST_DIR_SRC)/advance/d2
-	mkdir $(EMU_DIST_DIR_SRC)/advance/zlib
-	cp $(ZLIB_SRC) $(EMU_DIST_DIR_SRC)/advance/zlib
-	mkdir $(EMU_DIST_DIR_SRC)/advance/expat
-	cp $(EXPAT_SRC) $(EMU_DIST_DIR_SRC)/advance/expat
+	mkdir $(EMU_DIST_DIR_SRC)/alien/zlib
+	cp $(ZLIB_SRC) $(EMU_DIST_DIR_SRC)/alien/zlib
+	mkdir $(EMU_DIST_DIR_SRC)/alien/expat
+	cp $(EXPAT_SRC) $(EMU_DIST_DIR_SRC)/alien/expat
+	mkdir $(EMU_DIST_DIR_SRC)/alien/nanojpeg
+	cp $(NANOJPEG_SRC) $(EMU_DIST_DIR_SRC)/alien/nanojpeg
+	mkdir $(EMU_DIST_DIR_SRC)/alien/sljit
+	cp $(wildcard $(srcdir)/alien/sljit/*.c) $(EMU_DIST_DIR_SRC)/alien/sljit
+	cp $(wildcard $(srcdir)/alien/sljit/*.h) $(EMU_DIST_DIR_SRC)/alien/sljit
+	cp $(srcdir)/alien/sljit/README $(EMU_DIST_DIR_SRC)/alien/sljit
+	cp -R $(srcdir)/alien/sljit/allocator_src $(EMU_DIST_DIR_SRC)/alien/sljit
+	mkdir $(EMU_DIST_DIR_SRC)/alien/lzma
+	cp $(srcdir)/alien/lzma/LICENSE $(EMU_DIST_DIR_SRC)/alien/lzma
+	cp -R $(srcdir)/alien/lzma/include $(EMU_DIST_DIR_SRC)/alien/lzma
+	cp -R $(srcdir)/alien/lzma/src $(EMU_DIST_DIR_SRC)/alien/lzma
+	mkdir $(EMU_DIST_DIR_SRC)/alien/zstd
+	cp $(wildcard $(srcdir)/alien/zstd/*.c) $(EMU_DIST_DIR_SRC)/alien/zstd
+	cp $(wildcard $(srcdir)/alien/zstd/*.h) $(EMU_DIST_DIR_SRC)/alien/zstd
+	cp $(srcdir)/alien/zstd/LICENSE $(EMU_DIST_DIR_SRC)/alien/zstd
+	mkdir $(EMU_DIST_DIR_SRC)/alien/dr_flac
+	cp $(wildcard $(srcdir)/alien/dr_flac/*.c) $(EMU_DIST_DIR_SRC)/alien/dr_flac
+	cp $(wildcard $(srcdir)/alien/dr_flac/*.h) $(EMU_DIST_DIR_SRC)/alien/dr_flac
+	mkdir $(EMU_DIST_DIR_SRC)/alien/libchdr
+	cp $(srcdir)/alien/libchdr/LICENSE.txt $(EMU_DIST_DIR_SRC)/alien/libchdr
+	cp -R $(srcdir)/alien/libchdr/include $(EMU_DIST_DIR_SRC)/alien/libchdr
+	cp -R $(srcdir)/alien/libchdr/src $(EMU_DIST_DIR_SRC)/alien/libchdr
 	mkdir $(EMU_DIST_DIR_SRC)/contrib
 ifneq ($(EMU_CONTRIB_SRC),)
 	cp -R $(EMU_CONTRIB_SRC) $(EMU_DIST_DIR_SRC)/contrib
 endif
-	cp -R $(srcdir)/src $(EMU_DIST_DIR_SRC)
-	cp -R $(srcdir)/srcmess $(EMU_DIST_DIR_SRC)
+	cp -R $(srcdir)/mame $(EMU_DIST_DIR_SRC)
 	cp -R $(srcdir)/mess $(EMU_DIST_DIR_SRC)
 	find $(EMU_DIST_DIR_SRC) \( -name "*.dat" \) -type f -exec dos2unix {} \;
 	rm -f $(EMU_DIST_FILE_SRC).tar.gz

@@ -350,6 +350,7 @@ struct advance_ui_state_context {
 	adv_bool ui_direct_text_flag; /**< Direct text on screen flag. */
 	char ui_direct_buffer[256]; /**< Direct text on screen message. */
 	adv_bool ui_direct_slow_flag; /**< Direct slow tag on screen flag. */
+	adv_bool ui_direct_frameskip_flag; /**< Direct frameskip tag on screen flag. */
 	adv_bool ui_direct_fast_flag; /**< Direct fast tag on screen flag. */
 
 	adv_bitmap* help_image; /**< Help image. */
@@ -370,6 +371,7 @@ void advance_ui_message_va(struct advance_ui_context* context, const char* text,
 void advance_ui_message(struct advance_ui_context* context, const char* text, ...) __attribute__((format(printf, 2, 3)));
 void advance_ui_direct_text(struct advance_ui_context* context, const char* text);
 void advance_ui_direct_slow(struct advance_ui_context* context, int flag);
+void advance_ui_direct_frameskip(struct advance_ui_context* context, int flag);
 void advance_ui_direct_fast(struct advance_ui_context* context, int flag);
 void advance_ui_help(struct advance_ui_context* context);
 
@@ -402,6 +404,27 @@ struct advance_record_config_context {
 	adv_bool video_flag; /**< Main activation flag for video recording. */
 	adv_bool sound_flag; /**< Main activation flag for sound recording. */
 	unsigned video_interlace; /**< Interlace factor for the video recording. */
+	unsigned debug_snap_step; /**< Step of frames to snapshot (0 disabled). */
+	unsigned debug_exit; /**< Frame number to automatically exit (0 disabled). */
+	unsigned debug_start; /**< First frame to trace/capture (0 starts immediately). */
+	adv_bool debug_sound; /**< Record audio automatically until exit. */
+	int debug_cpu; /**< CPU number to trace (-1 for all, default -2 disabled). */
+	int debug_watch_cpu; /**< Watched CPU, -1 disables memory logging. */
+	unsigned debug_watch_address;
+	unsigned debug_watch_length;
+	int debug_break_cpu; /**< Breakpoint CPU, -1 disables the breakpoint. */
+	unsigned debug_break_address;
+};
+
+struct advance_record_sound_state {
+	adv_bool active_flag;
+	adv_bool stereo_flag;
+	double frequency;
+	unsigned sample_counter;
+	unsigned sample_size;
+	adv_bool stopped_flag;
+	char file_buffer[FILE_MAXPATH];
+	FILE* f;
 };
 
 struct advance_record_state_context {
@@ -409,15 +432,11 @@ struct advance_record_state_context {
 	pthread_mutex_t access_mutex;
 #endif
 
-	adv_bool sound_active_flag; /**< Main activation flag for sound recording. */
+	struct advance_record_sound_state sound;
+	struct advance_record_sound_state debug_sound;
+	adv_bool debug_sound_failed; /**< Avoid retrying failed debug recordings every frame. */
 	adv_bool video_active_flag; /**< Main activation flag for video recording. */
 	adv_bool snapshot_active_flag; /**< Main activatio flag for snapshot recording. */
-
-	adv_bool sound_stereo_flag; /**< Number of channels 1 (==0) or 2 (!=0) channels. */
-	double sound_frequency; /**< Frequency. */
-	unsigned sound_sample_counter; /**< Samples saved. */
-	unsigned sound_sample_size; /**< Size in byte of one sample. */
-	adv_bool sound_stopped_flag; /**< If the sound recording is stopped. */
 
 	double video_frequency;
 	unsigned video_sample_counter;
@@ -425,8 +444,11 @@ struct advance_record_state_context {
 	unsigned video_freq_base; /**< Frequency step value. */
 	adv_bool video_stopped_flag; /**< If the video recording is stopped. */
 
-	char sound_file_buffer[FILE_MAXPATH]; /**< Sound file */
-	FILE* sound_f; /**< Sound handle */
+	adv_bool debug_break_failed; /**< Failure writing the breakpoint screenshot. */
+	adv_bool debug_break_pending; /**< Capture a frame and exit after a PC match. */
+	unsigned debug_frame_counter; /**< Frame counter for debug features. */
+	target_clock_t debug_time_start; /**< Emulation start for frame-limited timing. */
+	target_clock_t debug_time_stop; /**< Time when the frame limit is reached. */
 
 	char video_file_buffer[FILE_MAXPATH]; /**< Video file */
 	adv_fz* video_f; /**< Video handle */
@@ -446,6 +468,7 @@ adv_error advance_record_config_load(struct advance_record_context* context, adv
 void advance_record_sound_update(struct advance_record_context* context, const short* sample_buffer, unsigned sample_count);
 void advance_record_video_update(struct advance_record_context* context, const void* video_buffer, unsigned video_width, unsigned video_height, unsigned video_bytes_per_pixel, unsigned video_bytes_per_scanline, adv_color_def color_def, adv_color_rgb* palette_map, unsigned palette_max, unsigned orientation);
 void advance_record_snapshot_update(struct advance_record_context* context, const void* video_buffer, unsigned video_width, unsigned video_height, unsigned video_bytes_per_pixel, unsigned video_bytes_per_scanline, adv_color_def color_def, adv_color_rgb* palette_map, unsigned palette_max, unsigned orientation);
+adv_error advance_record_debug_snapshot_update(struct advance_record_context* context, unsigned frame, adv_bool breakpoint, const void* video_buffer, unsigned video_width, unsigned video_height, unsigned video_bytes_per_pixel, unsigned video_bytes_per_scanline, adv_color_def color_def, adv_color_rgb* palette_map, unsigned palette_max, unsigned orientation);
 
 adv_bool advance_record_sound_is_active(struct advance_record_context* context);
 adv_bool advance_record_video_is_active(struct advance_record_context* context);
@@ -619,7 +642,6 @@ void advance_sound_config_save(struct advance_sound_context* context, const char
 #define COMBINE_FILTER 3
 #define COMBINE_SCALEX 6
 #define COMBINE_SCALEK 7
-#define COMBINE_HQ 8
 #define COMBINE_XBR 9
 /*@}*/
 
@@ -677,10 +699,13 @@ struct advance_video_config_context {
 	unsigned game_orientation; /**< Game orientation mask. Mask of ORIENTATION_*. */
 	int combine; /**< Combine effect. Mask of COMBINE_*. */
 	int combine_max; /**< Maximum combine effect. Always starting with COMBINE_XBR and then decreasing at runtime. */
+	int combine_write; /**< Combine write effect */
 	int rgb_effect; /**< Special additional effect. Mask of EFFECT_*. */
 	int interlace_effect; /**< Special additional interlace effect. Mask of EFFECT_*. */
 	double turbo_speed_factor; /**< Speed of the turbo function. Multiplicative factor. */
 	double fps_speed_factor; /**< Additional speed factor over the standard value. Multiplicative factor. */
+	double fps_record_speed_factor; /**< Speed factor with native recording. Multiplicative factor. */
+	adv_bool record_speed_flag; /**< If sync_recordspeed is active. */
 	double fps_fixed; /**< Fixed fps. If ==0 use the original fps. */
 	int fastest_time; /**< Time for turbo at the startup [seconds]. */
 	int measure_time; /**< Time for the speed measure [seconds]. */
@@ -718,7 +743,6 @@ struct advance_video_config_context {
 #define AUDIOVIDEO_MEASURE_MAX 17
 
 #define PIPELINE_MEASURE_MAX 13
-#define PIPELINE_BLIT_MAX 2 /**< Number of pipelines to create. 0 for buffered, 1 for direct write. */
 
 /** State for the video part. */
 struct advance_video_state_context {
@@ -728,6 +752,7 @@ struct advance_video_state_context {
 	/* Game info */
 	adv_bool game_vector_flag; /**< If is a vector game. */
 	double game_fps; /**< Frame rate of the game. */
+	double game_native_fps; /**< Native frame rate of the game without speed factor. */
 	unsigned long long game_pixelaspect_x; /**< Pixel aspect of the game */
 	unsigned long long game_pixelaspect_y; /**< Pixel aspect of the game */
 	unsigned game_area_size_x; /**< Max size of the used part. */
@@ -813,6 +838,9 @@ struct advance_video_state_context {
 	unsigned thread_state_led; /**< Thread game led to set. */
 	unsigned thread_state_input; /**< Thread input to process. */
 	adv_bool thread_state_skip_flag; /**< Thread frame skip_flag to use. */
+	adv_mode* thread_arg_mode; /**< Argument to pass */
+	adv_bool thread_arg_bool; /**< Argument to pass */
+	adv_error thread_arg_result; /**< Argument to pass */
 #endif
 
 	unsigned frame_counter; /**< Counter of number of frames. */
@@ -842,7 +870,7 @@ struct advance_video_state_context {
 	int blit_src_dw; /**< Source row step of the game bitmap. */
 	int blit_src_offset; /**< Pointer at the first pixel of the game bitmap. */
 	adv_bool blit_pipeline_flag; /**< !=0 if blit_pipeline is computed. */
-	struct video_pipeline_struct blit_pipeline[PIPELINE_BLIT_MAX]; /**< Put pipeline to video. */
+	struct video_pipeline_struct blit_pipeline; /**< Put pipeline to video. */
 	unsigned blit_pipeline_index; /**< Pipeline to use. */
 
 	/* Buffer info */
@@ -871,12 +899,6 @@ struct advance_video_state_context {
 
 	/** Basic increment of number of pixel for mantaining the alignement. */
 	unsigned game_visible_pos_x_increment;
-
-	adv_bool pipeline_measure_flag; /**< !=0 if the time measure is active. */
-	double pipeline_measure_map[PIPELINE_BLIT_MAX][PIPELINE_MEASURE_MAX]; /**< Single measure. */
-	double pipeline_measure_result[PIPELINE_BLIT_MAX]; /**< Selected measure. */
-	unsigned pipeline_measure_i;
-	unsigned pipeline_measure_j;
 
 	double pipeline_timing_map[PIPELINE_MEASURE_MAX]; /**< Continuous measure of pipeline timing. */
 	unsigned pipeline_timing_i; /**< Index of the measure. */
@@ -942,6 +964,14 @@ adv_error advance_video_mode_init(struct advance_video_context* context, struct 
 void advance_video_mode_done(struct advance_video_context* context);
 adv_error advance_video_mode_update(struct advance_video_context* context);
 
+#define THREAD_FRAME 1
+#define THREAD_INIT 2
+#define THREAD_DONE 3
+#define THREAD_UPDATE 4
+
+void advance_thread_vidmode_done(struct advance_video_context* context, adv_bool restore);
+adv_error advance_thread_vidmode_update(struct advance_video_context* context, adv_mode* mode, adv_bool ignore_input);
+void advance_video_thread_signal(struct advance_video_context* context, int ready);
 void advance_video_thread_wait(struct advance_video_context* context);
 void advance_video_reconfigure(struct advance_video_context* context, struct advance_video_config_context* config);
 
@@ -975,8 +1005,11 @@ struct advance_global_config_context {
 	int lang; /**< Language. -1 for default. */
 	adv_bool autosave; /**< If config should be autosaved. */
 	adv_bool freeplay_flag; /**< Free play switch. */
+	adv_bool cocktail_flag; /**< Cocktail switch. */
 	adv_bool quiet_flag; /**< Be quiet on message printing. */
 	adv_bool mutedemo_flag; /**< Mute demo mode. */
+	adv_bool jit_flag; /**< JIT recompiler switch. */
+	adv_bool slowdown_flag; /**< Authentic hardware slowdown simulation switch. */
 	double pause_brightness; /**< Display brightness when paused. */
 	char lcd_server_buffer[256]; /**< Server (address:port) for the LCD output. */
 	int lcd_timeout; /**< LCD timeout in ms. */

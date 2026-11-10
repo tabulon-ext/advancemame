@@ -42,6 +42,31 @@
 /***************************************************************************/
 /* Config */
 
+#if defined(__i386__)
+#define CONFIG_X86 1
+#define CONFIG_X86_32 1
+#endif
+
+#if defined(__x86_64__)
+#define CONFIG_X86 1
+#define CONFIG_X86_64 1
+#endif
+
+#if defined(__aarch64__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#define CONFIG_NEON 1
+#endif
+#if defined(__ARM_FEATURE_CRC32)
+#define CONFIG_ARM_CRC 1
+#endif
+#endif
+
+#if defined(__arm__)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#define CONFIG_NEON32 1
+#endif
+#endif
+
 /* Customize for MSDOS DJGPP */
 #ifdef __MSDOS__
 #define TIME_WITH_SYS_TIME 1
@@ -82,15 +107,11 @@
 #include <unistd.h>
 #endif
 
-#if TIME_WITH_SYS_TIME
-#include <sys/time.h>
-#include <time.h>
-#else
-#if HAVE_SYS_TIME_H
-#include <sys/time.h>
-#else
+#if HAVE_TIME_H
 #include <time.h>
 #endif
+#if HAVE_SYS_TIME_H
+#include <sys/time.h>
 #endif
 
 #if HAVE_DIRENT_H

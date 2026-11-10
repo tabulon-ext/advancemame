@@ -1,0 +1,626 @@
+// license:BSD-3-Clause
+// copyright-holders:Zsolt Vasvari, Aaron Giles, R. Belmont, Jonathan Gevaryahu
+/***************************************************************************
+
+ Berzerk Driver by Zsolt Vasvari
+ Sound Driver by Alex Judd
+
+***************************************************************************/
+
+#include "driver.h"
+#include "includes/berzerk.h"
+#include "sound/samples.h"
+#include "sound/s14001a.h"
+
+
+static ADDRESS_MAP_START( berzerk_map, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0x0000, 0x07ff) AM_ROM
+	AM_RANGE(0x0800, 0x09ff) AM_RAM AM_BASE(&generic_nvram) AM_SIZE(&generic_nvram_size)
+	AM_RANGE(0x1000, 0x3fff) AM_ROM
+	AM_RANGE(0x4000, 0x5fff) AM_READWRITE(MRA8_RAM,berzerk_videoram_w) AM_BASE(&videoram) AM_SHARE(1)
+	AM_RANGE(0x6000, 0x7fff) AM_READWRITE(MRA8_RAM,berzerk_magicram_w) AM_SHARE(1)
+	AM_RANGE(0x8000, 0x87ff) AM_READWRITE(MRA8_RAM,berzerk_colorram_w) AM_BASE(&colorram)
+ADDRESS_MAP_END
+
+
+static ADDRESS_MAP_START( frenzy_map, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0x0000, 0x3fff) AM_ROM
+	AM_RANGE(0x4000, 0x5fff) AM_READWRITE(MRA8_RAM,berzerk_videoram_w) AM_BASE(&videoram) AM_SHARE(1)
+	AM_RANGE(0x6000, 0x7fff) AM_READWRITE(MRA8_RAM,berzerk_magicram_w) AM_SHARE(1)
+	AM_RANGE(0x8000, 0x87ff) AM_READWRITE(MRA8_RAM,berzerk_colorram_w) AM_BASE(&colorram)
+	AM_RANGE(0xc000, 0xcfff) AM_ROM
+	AM_RANGE(0xf800, 0xf9ff) AM_RAM AM_BASE(&generic_nvram) AM_SIZE(&generic_nvram_size)
+ADDRESS_MAP_END
+
+
+static ADDRESS_MAP_START( port_map, ADDRESS_SPACE_IO, 8 )
+	ADDRESS_MAP_FLAGS( AMEF_ABITS(8) )
+	AM_RANGE(0x40, 0x47) AM_READWRITE(berzerk_sound_r,berzerk_sound_w) /* First sound board */
+	AM_RANGE(0x48, 0x48) AM_READ(input_port_0_r)
+	AM_RANGE(0x49, 0x49) AM_READ(input_port_1_r)
+	AM_RANGE(0x4a, 0x4a) AM_READ(input_port_2_r)
+	AM_RANGE(0x4b, 0x4b) AM_WRITE(berzerk_magicram_control_w)
+	AM_RANGE(0x4c, 0x4c) AM_READWRITE(berzerk_nmi_enable_r,berzerk_nmi_enable_w)
+	AM_RANGE(0x4d, 0x4d) AM_READWRITE(berzerk_nmi_disable_r,berzerk_nmi_disable_w)
+	AM_RANGE(0x4e, 0x4e) AM_READ(berzerk_port_4e_r)
+	AM_RANGE(0x4f, 0x4f) AM_WRITE(berzerk_irq_enable_w)
+	AM_RANGE(0x50, 0x57) AM_WRITE(MWA8_NOP) /* Second sound board but not used */
+	AM_RANGE(0x60, 0x60) AM_READ(input_port_4_r)
+	AM_RANGE(0x61, 0x61) AM_READ(input_port_5_r)
+	AM_RANGE(0x62, 0x62) AM_READ(input_port_6_r)
+	AM_RANGE(0x63, 0x63) AM_READ(input_port_7_r)
+	AM_RANGE(0x64, 0x64) AM_READ(input_port_8_r)
+	AM_RANGE(0x65, 0x65) AM_READ(input_port_9_r)
+	AM_RANGE(0x66, 0x66) AM_READ(berzerk_led_off_r)
+	AM_RANGE(0x67, 0x67) AM_READ(berzerk_led_on_r)
+ADDRESS_MAP_END
+
+
+#define COINAGE(CHUTE) \
+	PORT_DIPNAME( 0x0f, 0x00, "Coin "#CHUTE ) \
+	PORT_DIPSETTING(    0x09, DEF_STR( 2C_1C ) ) \
+	PORT_DIPSETTING(    0x0d, DEF_STR( 4C_3C ) ) \
+	PORT_DIPSETTING(    0x00, DEF_STR( 1C_1C ) ) \
+	PORT_DIPSETTING(    0x0e, DEF_STR( 4C_5C ) ) \
+	PORT_DIPSETTING(    0x0a, DEF_STR( 2C_3C ) ) \
+	PORT_DIPSETTING(    0x0f, DEF_STR( 4C_7C ) ) \
+	PORT_DIPSETTING(    0x01, DEF_STR( 1C_2C ) ) \
+	PORT_DIPSETTING(    0x0b, DEF_STR( 2C_5C ) ) \
+	PORT_DIPSETTING(    0x02, DEF_STR( 1C_3C ) ) \
+	PORT_DIPSETTING(    0x0c, DEF_STR( 2C_7C ) ) \
+	PORT_DIPSETTING(    0x03, DEF_STR( 1C_4C ) ) \
+	PORT_DIPSETTING(    0x04, DEF_STR( 1C_5C ) ) \
+	PORT_DIPSETTING(    0x05, DEF_STR( 1C_6C ) ) \
+	PORT_DIPSETTING(    0x06, DEF_STR( 1C_7C ) ) \
+	PORT_DIPSETTING(    0x07, "1 Coin/10 Credits" ) \
+	PORT_DIPSETTING(    0x08, "1 Coin/14 Credits" ) \
+	PORT_BIT( 0xf0, IP_ACTIVE_LOW,  IPT_UNUSED )
+
+
+INPUT_PORTS_START( berzerk )
+	PORT_START      /* IN0 */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_8WAY
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_8WAY
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_8WAY
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_8WAY
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 )
+	PORT_BIT( 0xe0, IP_ACTIVE_LOW, IPT_UNUSED )
+
+	PORT_START      /* IN1 */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_START2 )
+	PORT_BIT( 0x1c, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_COIN3 )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_COIN2 )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_COIN1 )
+
+	PORT_START      /* IN2 */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 ) PORT_COCKTAIL
+	PORT_BIT( 0x60, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_DIPNAME( 0x80, 0x80, DEF_STR( Cabinet ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( Upright ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Cocktail ) )
+
+	PORT_START      /* IN3 */
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_VBLANK )
+	PORT_BIT( 0x7e, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_SPECIAL )	/* Collision */
+
+	PORT_START      /* IN4 */
+	PORT_BIT(    0x01, 0x00, IPT_DIPSWITCH_NAME ) PORT_NAME("Input Test Mode") PORT_CODE(KEYCODE_F2) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x01, DEF_STR( On ) )
+	PORT_BIT(    0x02, 0x00, IPT_DIPSWITCH_NAME ) PORT_NAME("Crosshair Pattern") PORT_CODE(KEYCODE_F4) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x02, DEF_STR( On ) )
+	PORT_BIT( 0x3c, IP_ACTIVE_LOW,  IPT_UNUSED )
+	PORT_DIPNAME( 0xc0, 0x00, DEF_STR( Language ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( English ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( German ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( French ) )
+	PORT_DIPSETTING(    0xc0, DEF_STR( Spanish ) )
+
+	PORT_START      /* IN5 */
+	PORT_BIT(    0x03, 0x00, IPT_DIPSWITCH_NAME ) PORT_NAME("Color Test") PORT_CODE(KEYCODE_F5) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x03, DEF_STR( On ) )
+	PORT_BIT( 0x3c, IP_ACTIVE_LOW,  IPT_UNUSED )
+	PORT_DIPNAME( 0xc0, 0xc0, DEF_STR( Bonus_Life ) )
+	PORT_DIPSETTING(    0xc0, "5000 and 10000" )
+	PORT_DIPSETTING(    0x40, "5000" )
+	PORT_DIPSETTING(    0x80, "10000" )
+	PORT_DIPSETTING(    0x00, DEF_STR( None ) )
+
+	PORT_START      /* IN6 */
+	COINAGE(3)
+
+	PORT_START      /* IN7 */
+	COINAGE(2)
+
+	PORT_START      /* IN8 */
+	COINAGE(1)
+
+	PORT_START      /* IN9 */
+	PORT_DIPNAME( 0x01, 0x00, DEF_STR( Free_Play ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x01, DEF_STR( On ) )
+	PORT_BIT( 0x7e, IP_ACTIVE_LOW,  IPT_UNUSED )
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Stats") PORT_CODE(KEYCODE_F1)
+INPUT_PORTS_END
+
+INPUT_PORTS_START( frenzy )
+	PORT_START      /* IN0 */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_8WAY
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_8WAY
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_8WAY
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_8WAY
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 )
+	PORT_BIT( 0xe0, IP_ACTIVE_LOW, IPT_UNUSED )
+
+	PORT_START      /* IN1 */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_START2 )
+	PORT_BIT( 0x3c, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_COIN2 )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_COIN1 )
+
+	PORT_START      /* IN2 */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_JOYSTICK_LEFT ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_JOYSTICK_RIGHT ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x04, IP_ACTIVE_LOW, IPT_JOYSTICK_UP ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_JOYSTICK_DOWN ) PORT_8WAY PORT_COCKTAIL
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_BUTTON1 ) PORT_COCKTAIL
+	PORT_BIT( 0x60, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_DIPNAME( 0x80, 0x80, DEF_STR( Cabinet ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( Upright ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Cocktail ) )
+
+	PORT_START      /* IN3 */
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_VBLANK )
+	PORT_BIT( 0x7e, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_SPECIAL )	/* Collision */
+
+	PORT_START      /* IN4 */
+	PORT_DIPNAME( 0x0f, 0x03, DEF_STR( Bonus_Life ) )
+	PORT_DIPSETTING(    0x01, "1000" )
+	PORT_DIPSETTING(    0x02, "2000" )
+	PORT_DIPSETTING(    0x03, "3000" )
+	PORT_DIPSETTING(    0x04, "4000" )
+	PORT_DIPSETTING(    0x05, "5000" )
+	PORT_DIPSETTING(    0x06, "6000" )
+	PORT_DIPSETTING(    0x07, "7000" )
+	PORT_DIPSETTING(    0x08, "8000" )
+	PORT_DIPSETTING(    0x09, "9000" )
+	PORT_DIPSETTING(    0x0a, "10000" )
+	PORT_DIPSETTING(    0x0b, "11000" )
+	PORT_DIPSETTING(    0x0c, "12000" )
+	PORT_DIPSETTING(    0x0d, "13000" )
+	PORT_DIPSETTING(    0x0e, "14000" )
+	PORT_DIPSETTING(    0x0f, "15000" )
+	PORT_DIPSETTING(    0x00, DEF_STR( None ) )
+	PORT_BIT( 0x30, IP_ACTIVE_HIGH, IPT_UNUSED )
+	PORT_DIPNAME( 0xc0, 0x00, DEF_STR( Language ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( English ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( German ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( French ) )
+	PORT_DIPSETTING(    0xc0, DEF_STR( Spanish ) )
+
+	PORT_START      /* IN5 */
+	PORT_BIT( 0x03, IP_ACTIVE_HIGH, IPT_UNUSED )  /* Bit 0 does some more hardware tests */
+	PORT_BIT(    0x04, 0x00, IPT_DIPSWITCH_NAME ) PORT_NAME("Input Test Mode") PORT_CODE(KEYCODE_F2) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x04, DEF_STR( On ) )
+	PORT_BIT(    0x08, 0x00, IPT_DIPSWITCH_NAME ) PORT_NAME("Crosshair Pattern") PORT_CODE(KEYCODE_F4) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x08, DEF_STR( On ) )
+	PORT_BIT( 0xf0, IP_ACTIVE_LOW, IPT_UNUSED )
+
+	/* The following 3 ports use all 8 bits, but I didn't feel like adding all 256 values :-) */
+	PORT_START      /* IN6 */
+	PORT_DIPNAME( 0x0f, 0x01, "Coins/Credit B" )
+	/*PORT_DIPSETTING(    0x00, "0" )    Can't insert coins  */
+	PORT_DIPSETTING(    0x01, "1" )
+	PORT_DIPSETTING(    0x02, "2" )
+	PORT_DIPSETTING(    0x03, "3" )
+	PORT_DIPSETTING(    0x04, "4" )
+	PORT_DIPSETTING(    0x05, "5" )
+	PORT_DIPSETTING(    0x06, "6" )
+	PORT_DIPSETTING(    0x07, "7" )
+	PORT_DIPSETTING(    0x08, "8" )
+	PORT_DIPSETTING(    0x09, "9" )
+	PORT_DIPSETTING(    0x0a, "10" )
+	PORT_DIPSETTING(    0x0b, "11" )
+	PORT_DIPSETTING(    0x0c, "12" )
+	PORT_DIPSETTING(    0x0d, "13" )
+	PORT_DIPSETTING(    0x0e, "14" )
+	PORT_DIPSETTING(    0x0f, "15" )
+	PORT_BIT( 0xf0, IP_ACTIVE_HIGH,  IPT_UNUSED )
+
+	PORT_START      /* IN7 */
+	PORT_DIPNAME( 0x0f, 0x01, "Coins/Credit A" )
+	/*PORT_DIPSETTING(    0x00, "0" )    Can't insert coins  */
+	PORT_DIPSETTING(    0x01, "1" )
+	PORT_DIPSETTING(    0x02, "2" )
+	PORT_DIPSETTING(    0x03, "3" )
+	PORT_DIPSETTING(    0x04, "4" )
+	PORT_DIPSETTING(    0x05, "5" )
+	PORT_DIPSETTING(    0x06, "6" )
+	PORT_DIPSETTING(    0x07, "7" )
+	PORT_DIPSETTING(    0x08, "8" )
+	PORT_DIPSETTING(    0x09, "9" )
+	PORT_DIPSETTING(    0x0a, "10" )
+	PORT_DIPSETTING(    0x0b, "11" )
+	PORT_DIPSETTING(    0x0c, "12" )
+	PORT_DIPSETTING(    0x0d, "13" )
+	PORT_DIPSETTING(    0x0e, "14" )
+	PORT_DIPSETTING(    0x0f, "15" )
+	PORT_BIT( 0xf0, IP_ACTIVE_HIGH,  IPT_UNUSED )
+
+	PORT_START      /* IN8 */
+	PORT_DIPNAME( 0x0f, 0x01, "Coin Multiplier" )
+	PORT_DIPSETTING(    0x00, DEF_STR( Free_Play ) )
+	PORT_DIPSETTING(    0x01, "1" )
+	PORT_DIPSETTING(    0x02, "2" )
+	PORT_DIPSETTING(    0x03, "3" )
+	PORT_DIPSETTING(    0x04, "4" )
+	PORT_DIPSETTING(    0x05, "5" )
+	PORT_DIPSETTING(    0x06, "6" )
+	PORT_DIPSETTING(    0x07, "7" )
+	PORT_DIPSETTING(    0x08, "8" )
+	PORT_DIPSETTING(    0x09, "9" )
+	PORT_DIPSETTING(    0x0a, "10" )
+	PORT_DIPSETTING(    0x0b, "11" )
+	PORT_DIPSETTING(    0x0c, "12" )
+	PORT_DIPSETTING(    0x0d, "13" )
+	PORT_DIPSETTING(    0x0e, "14" )
+	PORT_DIPSETTING(    0x0f, "15" )
+	PORT_BIT( 0xf0, IP_ACTIVE_HIGH,  IPT_UNUSED )
+
+	PORT_START      /* IN9 */
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_COIN3 )
+	PORT_BIT( 0x7e, IP_ACTIVE_LOW,  IPT_UNUSED )
+	PORT_BIT(0x80, IP_ACTIVE_HIGH, IPT_OTHER ) PORT_NAME("Stats") PORT_CODE(KEYCODE_F1)
+INPUT_PORTS_END
+
+
+#define MOONWARP_COINAGE(CHUTE) \
+	PORT_DIPNAME( 0x0f, 0x00, "Coin "#CHUTE ) \
+	PORT_DIPSETTING(    0x09, DEF_STR( 2C_1C ) ) \
+	PORT_DIPSETTING(    0x0d, DEF_STR( 4C_3C ) ) \
+	PORT_DIPSETTING(    0x00, DEF_STR( 1C_1C ) ) \
+	PORT_DIPSETTING(    0x0e, DEF_STR( 4C_5C ) ) \
+	PORT_DIPSETTING(    0x0a, DEF_STR( 2C_3C ) ) \
+	PORT_DIPSETTING(    0x0f, DEF_STR( 4C_7C ) ) \
+	PORT_DIPSETTING(    0x01, DEF_STR( 1C_2C ) ) \
+	PORT_DIPSETTING(    0x0b, DEF_STR( 2C_5C ) ) \
+	PORT_DIPSETTING(    0x02, DEF_STR( 1C_3C ) ) \
+	PORT_DIPSETTING(    0x0c, DEF_STR( 2C_7C ) ) \
+	PORT_DIPSETTING(    0x03, DEF_STR( 1C_4C ) ) \
+	PORT_DIPSETTING(    0x04, DEF_STR( 1C_5C ) ) \
+	PORT_DIPSETTING(    0x05, DEF_STR( 1C_6C ) ) \
+	PORT_DIPSETTING(    0x06, DEF_STR( 1C_7C ) ) \
+	PORT_DIPSETTING(    0x07, "1 Coin/10 Credits" ) \
+	PORT_DIPSETTING(    0x08, "1 Coin/14 Credits" )
+
+
+INPUT_PORTS_START( moonwarp )
+	PORT_START_TAG("P1")
+	PORT_BIT( 0x1f, IP_ACTIVE_HIGH, IPT_SPECIAL )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_BUTTON3 )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_BUTTON2 )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_BUTTON1 )
+
+	PORT_START_TAG("SYSTEM")
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_START1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_START2 )
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_UNUSED )
+	PORT_BIT( 0x08, IP_ACTIVE_LOW, IPT_BUTTON4 ) PORT_NAME("Hyper Flip")
+	PORT_BIT( 0x10, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_COIN3 )
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_COIN2 )
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_COIN1 )
+
+	PORT_START_TAG("P2")
+	PORT_BIT( 0x1f, IP_ACTIVE_HIGH, IPT_SPECIAL )
+	PORT_BIT( 0x20, IP_ACTIVE_LOW, IPT_BUTTON3 ) PORT_COCKTAIL
+	PORT_BIT( 0x40, IP_ACTIVE_LOW, IPT_BUTTON2 ) PORT_COCKTAIL
+	PORT_BIT( 0x80, IP_ACTIVE_LOW, IPT_BUTTON1 ) PORT_COCKTAIL
+
+	PORT_START_TAG("COLLISION")
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_VBLANK )
+	PORT_BIT( 0x7e, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_SPECIAL )
+
+	PORT_START_TAG("F3")
+	PORT_DIPNAME( 0x01, 0x00, "Input Test Mode" ) PORT_CODE(KEYCODE_F2) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x01, DEF_STR( On ) )
+	PORT_DIPNAME( 0x02, 0x00, "Crosshair Pattern" ) PORT_CODE(KEYCODE_F4) PORT_TOGGLE
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x02, DEF_STR( On ) )
+	PORT_DIPNAME( 0x04, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x04, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x08, 0x00, "Spinner Orientation" )
+	PORT_DIPSETTING(    0x08, DEF_STR( Reverse ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Standard ) )
+	PORT_DIPNAME( 0x10, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x10, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x20, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x20, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0xc0, 0x00, DEF_STR( Language ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( English ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( German ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( French ) )
+	PORT_DIPSETTING(    0xc0, DEF_STR( Spanish ) )
+
+	PORT_START_TAG("F2")
+	PORT_DIPNAME( 0x03, 0x00, "Hardware Tests" )
+	PORT_DIPSETTING(    0x00, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x01, "Color test" )
+	PORT_DIPSETTING(    0x02, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x03, "Signature Analysis" )
+	PORT_DIPNAME( 0x04, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x04, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0xF8, 0x00, DEF_STR( Bonus_Life ) )
+	PORT_DIPSETTING(    0x00, "10000" )
+	PORT_DIPSETTING(    0x08, "15000" )
+	PORT_DIPSETTING(    0x10, "20000" )
+	PORT_DIPSETTING(    0x20, "30000" )
+	PORT_DIPSETTING(    0x40, "40000" )
+	PORT_DIPSETTING(    0x80, "50000" )
+	PORT_DIPSETTING(    0x18, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x28, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x30, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0x38, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x48, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x50, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0x58, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x60, "30000 (duplicate)" )
+	PORT_DIPSETTING(    0x68, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x70, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0x78, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x88, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0x90, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0x98, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0xa0, "30000 (duplicate)" )
+	PORT_DIPSETTING(    0xa8, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0xb0, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0xb8, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0xc0, "40000 (duplicate)" )
+	PORT_DIPSETTING(    0xc8, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0xd0, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0xd8, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0xe0, "30000 (duplicate)" )
+	PORT_DIPSETTING(    0xe8, "15000 (duplicate)" )
+	PORT_DIPSETTING(    0xf0, "20000 (duplicate)" )
+	PORT_DIPSETTING(    0xf8, "15000 (duplicate)" )
+
+	PORT_START_TAG("F6")
+	MOONWARP_COINAGE(3)
+	PORT_DIPNAME( 0x10, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x10, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x20, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x20, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0xc0, 0x00, DEF_STR( Difficulty ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Very_Easy ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( Easy ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( Normal ) )
+	PORT_DIPSETTING(    0xc0, DEF_STR( Hard ) )
+
+	PORT_START_TAG("F5")
+	MOONWARP_COINAGE(2)
+	PORT_DIPNAME( 0x10, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x10, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x20, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x20, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x40, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x80, 0x00, DEF_STR( Cabinet ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Upright ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( Cocktail ) )
+
+	PORT_START_TAG("F4")
+	MOONWARP_COINAGE(1)
+	PORT_DIPNAME( 0x10, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x10, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x20, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x20, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x40, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+	PORT_DIPNAME( 0x80, 0x00, DEF_STR( Unknown ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( Off ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( On ) )
+
+	PORT_START_TAG("SW2")
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("Free Game")
+	PORT_BIT( 0x7e, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("Bookkeeping") PORT_CODE(KEYCODE_F1)
+
+	PORT_START_TAG("P1_DIAL")
+	PORT_BIT( 0xff, 0x00, IPT_DIAL ) PORT_SENSITIVITY(25) PORT_KEYDELTA(4) PORT_RESET
+
+	PORT_START_TAG("P2_DIAL")
+	PORT_BIT( 0xff, 0x00, IPT_DIAL ) PORT_SENSITIVITY(25) PORT_KEYDELTA(4) PORT_COCKTAIL PORT_RESET
+
+INPUT_PORTS_END
+
+static UINT8 moonwarp_counter[2], moonwarp_direction[2];
+
+static UINT8 moonwarp_spinner(int player)
+{
+	INT8 delta = readinputport(10 + player);
+	if (delta < 0)
+		moonwarp_direction[player] = 0;
+	else if (delta > 0)
+		moonwarp_direction[player] = 0x10;
+	moonwarp_counter[player] = (moonwarp_counter[player] + abs(delta)) & 0x0f;
+	return moonwarp_counter[player] | moonwarp_direction[player] | (readinputport(player ? 2 : 0) & 0xe0);
+}
+
+static READ8_HANDLER( moonwarp_p1_r )
+{
+	return moonwarp_spinner(0);
+}
+
+static READ8_HANDLER( moonwarp_p2_r )
+{
+	return moonwarp_spinner(1);
+}
+
+static MACHINE_RESET( moonwarp )
+{
+	machine_reset_berzerk();
+	memset(moonwarp_counter, 0, sizeof(moonwarp_counter));
+	memset(moonwarp_direction, 0, sizeof(moonwarp_direction));
+}
+
+static DRIVER_INIT( moonwarp )
+{
+	memory_install_read8_handler(0, ADDRESS_SPACE_IO, 0x40, 0x47, 0, 0, moonwarp_sound_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_IO, 0x40, 0x47, 0, 0, moonwarp_sound_w);
+	memory_install_read8_handler(0, ADDRESS_SPACE_IO, 0x48, 0x48, 0, 0, moonwarp_p1_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_IO, 0x4a, 0x4a, 0, 0, moonwarp_p2_r);
+}
+
+static MACHINE_DRIVER_START( berzerk )
+
+	/* basic machine hardware */
+	MDRV_CPU_ADD_TAG("main", Z80, 2500000)        /* 2.5 MHz */
+	MDRV_CPU_PROGRAM_MAP(berzerk_map,0)
+	MDRV_CPU_IO_MAP(port_map,0)
+	MDRV_CPU_VBLANK_INT(berzerk_interrupt,8)
+
+	MDRV_FRAMES_PER_SECOND(60)
+	MDRV_VBLANK_DURATION(2500)  /* Needs to be long enough so 2 of the 8 */
+								/* interrupts fall inside the VBLANK */
+	MDRV_MACHINE_RESET(berzerk)
+	MDRV_NVRAM_HANDLER(generic_0fill)
+
+	/* video hardware */
+	MDRV_VIDEO_ATTRIBUTES(VIDEO_TYPE_RASTER)
+	MDRV_SCREEN_SIZE(256, 256)
+	MDRV_VISIBLE_AREA(0, 256-1, 32, 256-1)
+	MDRV_PALETTE_LENGTH(16)
+
+	MDRV_PALETTE_INIT(berzerk)
+	MDRV_VIDEO_START(berzerk)
+	MDRV_VIDEO_UPDATE(generic_bitmapped)
+
+	/* sound hardware */
+	MDRV_SPEAKER_STANDARD_MONO("mono")
+
+	MDRV_SOUND_ADD_TAG("samples", SAMPLES, 0)
+	MDRV_SOUND_CONFIG(berzerk_samples_interface)
+	MDRV_SOUND_ROUTE(ALL_OUTPUTS, "mono", 0.25)
+MACHINE_DRIVER_END
+
+static MACHINE_DRIVER_START( frenzy )
+
+	/* basic machine hardware */
+	MDRV_IMPORT_FROM(berzerk)
+	MDRV_CPU_MODIFY("main")
+	MDRV_CPU_PROGRAM_MAP(frenzy_map,0)
+MACHINE_DRIVER_END
+
+
+
+/***************************************************************************
+
+  Game driver(s)
+
+***************************************************************************/
+
+static MACHINE_DRIVER_START( moonwarp )
+	MDRV_IMPORT_FROM(frenzy)
+	MDRV_MACHINE_RESET(moonwarp)
+	MDRV_SOUND_REMOVE("samples")
+	MDRV_SOUND_ADD(CUSTOM, 2500000 / 16 / 8)
+	MDRV_SOUND_CONFIG(s14001a_speech_interface)
+	MDRV_SOUND_ROUTE(ALL_OUTPUTS, "mono", 0.5)
+	MDRV_SOUND_ADD(CUSTOM, 0)
+	MDRV_SOUND_CONFIG(moonwarp_effects_interface)
+	MDRV_SOUND_ROUTE(ALL_OUTPUTS, "mono", 0.33)
+MACHINE_DRIVER_END
+
+ROM_START( berzerk )
+	ROM_REGION( 0x10000, REGION_CPU1, 0 )
+	ROM_LOAD( "1c-0",         0x0000, 0x0800, CRC(ca566dbc) SHA1(fae2647f12f1cd82826db61b53b116a5e0c9f995) )
+	ROM_LOAD( "1d-1",         0x1000, 0x0800, CRC(7ba69fde) SHA1(69af170c4a39a3494dcd180737e5c87b455f9203) )
+	ROM_LOAD( "3d-2",         0x1800, 0x0800, CRC(a1d5248b) SHA1(a0b7842f6a5f86c16d80d78e7012c78b3ea11d1d) )
+	ROM_LOAD( "5d-3",         0x2000, 0x0800, CRC(fcaefa95) SHA1(07f849aa39f1e3db938187ffde4a46a588156ddc) )
+	ROM_LOAD( "6d-4",         0x2800, 0x0800, CRC(1e35b9a0) SHA1(5a5e549ec0e4803ab2d1eac6b3e7171aedf28244) )
+	ROM_LOAD( "5c-5",         0x3000, 0x0800, CRC(c8c665e5) SHA1(e9eca4b119549e0061384abf52327c14b0d56624) )
+	ROM_FILL( 0x3800, 0x0800, 0xff )
+
+	ROM_REGION( 0x01000, REGION_SOUND1, 0 ) /* voice data */
+	ROM_LOAD( "1c",           0x0000, 0x0800, CRC(2cfe825d) SHA1(f12fed8712f20fa8213f606c4049a8144bfea42e) )	/* VSU-1000 board */
+	ROM_LOAD( "2c",           0x0800, 0x0800, CRC(d2b6324e) SHA1(20a6611ad6ec19409ac138bdae7bdfaeab6c47cf) )
+ROM_END
+
+ROM_START( berzerk1 )
+	ROM_REGION( 0x10000, REGION_CPU1, 0 )
+	ROM_LOAD( "rom0.1c",      0x0000, 0x0800, CRC(5b7eb77d) SHA1(8de488e279036fe40d6fb4c0dde16075309342fd) )
+	ROM_LOAD( "rom1.1d",      0x1000, 0x0800, CRC(e58c8678) SHA1(a11f08448b457d690b270512c9f02fcf1e41d9e0) )
+	ROM_LOAD( "rom2.3d",      0x1800, 0x0800, CRC(705bb339) SHA1(845191df90cd7d80f8fed3d2b69305301d921549) )
+	ROM_LOAD( "rom3.5d",      0x2000, 0x0800, CRC(6a1936b4) SHA1(f1635e9d2f25514c35559d2a247c3bc4b4034c19) )
+	ROM_LOAD( "rom4.6d",      0x2800, 0x0800, CRC(fa5dce40) SHA1(b3a3ee52bf65bbb3a20f905d3e4ebdf6871dcb5d) )
+	ROM_LOAD( "rom5.5c",      0x3000, 0x0800, CRC(2579b9f4) SHA1(890f0237afbb194166eae88c98de81989f408548) )
+	ROM_FILL( 0x3800, 0x0800, 0xff )
+
+	ROM_REGION( 0x01000, REGION_SOUND1, 0 ) /* voice data */
+	ROM_LOAD( "1c",           0x0000, 0x0800, CRC(2cfe825d) SHA1(f12fed8712f20fa8213f606c4049a8144bfea42e) )	/* VSU-1000 board */
+	ROM_LOAD( "2c",           0x0800, 0x0800, CRC(d2b6324e) SHA1(20a6611ad6ec19409ac138bdae7bdfaeab6c47cf) )
+ROM_END
+
+ROM_START( frenzy )
+	ROM_REGION( 0x10000, REGION_CPU1, 0 )
+	ROM_LOAD( "1c-0",         0x0000, 0x1000, CRC(abdd25b8) SHA1(e6a3ab826b51b2c6ddd63d55681848fccad800dd) )
+	ROM_LOAD( "1d-1",         0x1000, 0x1000, CRC(536e4ae8) SHA1(913385c43b8902d3d3ad2194a3137e19e61c6573) )
+	ROM_LOAD( "3d-2",         0x2000, 0x1000, CRC(3eb9bc9b) SHA1(1e43e76ae0606a6d41d9006005d6001bdee48694) )
+	ROM_LOAD( "5d-3",         0x3000, 0x1000, CRC(e1d3133c) SHA1(2af4a9bc2b29735a548ae770f872127bc009cc42) )
+	ROM_LOAD( "6d-4",         0xc000, 0x1000, CRC(5581a7b1) SHA1(1f633c1c29d3b64f701c601feba26da66a6c6f23) )
+
+	ROM_REGION( 0x01000, REGION_SOUND1, 0 ) /* voice data */
+	ROM_LOAD( "1c",           0x0000, 0x0800, CRC(2cfe825d) SHA1(f12fed8712f20fa8213f606c4049a8144bfea42e) )	/* VSU-1000 board */
+	ROM_LOAD( "2c",           0x0800, 0x0800, CRC(d2b6324e) SHA1(20a6611ad6ec19409ac138bdae7bdfaeab6c47cf) )
+ROM_END
+
+
+
+ROM_START( moonwarp )
+	ROM_REGION( 0x10000, REGION_CPU1, 0 )
+	ROM_LOAD( "1d.bin", 0x0000, 0x1000, CRC(75470634) SHA1(1a811fef39724fd227e06b694841d3dad5659622) )
+	ROM_LOAD( "3d.bin", 0x1000, 0x1000, CRC(a9d046dc) SHA1(88afccd09d2809cafd12dd40ab3be77e3707cfc5) )
+	ROM_LOAD( "5d.bin", 0x2000, 0x1000, CRC(bf671737) SHA1(cdfae1eb8995c2251813cc5633fc809aa9e6a36f) )
+	ROM_LOAD( "6d.bin", 0x3000, 0x1000, CRC(cef2d697) SHA1(5c31c6e7002f0d944b3028d1b804480acf3af042) )
+	ROM_LOAD( "5c.bin", 0xc000, 0x1000, CRC(a3d551ab) SHA1(a32352727b5475a6ec6c495c55f01ccd6e024f98) )
+
+	ROM_REGION( 0x01000, REGION_SOUND1, 0 )
+	ROM_LOAD( "moon_war_rv0_1c.1c", 0x0000, 0x0800, CRC(9e9a653f) SHA1(cf49a38ef343ace271ba1e5dde38bd8b9c0bd876) )
+	ROM_LOAD( "moon_war_rv0_2c.2c", 0x0800, 0x0800, CRC(73fd988d) SHA1(08a2aeb4d87eee58e38e4e3f749a95f2308aceb0) )
+
+	ROM_REGION( 0x0020, REGION_PROMS, 0 )
+	ROM_LOAD( "n82s123.6e", 0x0000, 0x0020, CRC(4471ca5d) SHA1(ba8dca2ec076818f8ad8c17b15c77965e36fa05e) )
+	ROM_LOAD( "prom.6e",    0x0000, 0x0020, CRC(56bffba3) SHA1(c8e24f6361c50bcb4c9d3f39cdaf4172c2a2b318) )
+ROM_END
+
+GAME( 1980, berzerk,  0,       berzerk, berzerk, 0, ROT0, "Stern", "Berzerk (set 1)", 0 )
+GAME( 1980, berzerk1, berzerk, berzerk, berzerk, 0, ROT0, "Stern", "Berzerk (set 2)", 0 )
+GAME( 1982, frenzy,   0,       frenzy,  frenzy,  0, ROT0, "Stern", "Frenzy", 0 )
+GAME( 1981, moonwarp, 0, moonwarp, moonwarp, moonwarp, ROT0, "Stern Electronics", "Moon War (prototype on Frenzy hardware)", GAME_IMPERFECT_SOUND )

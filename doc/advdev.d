@@ -18,28 +18,28 @@ Video Drivers
 	to always generate a perfect video mode with the correct size
 	and frequency.
 
-	They always work in `fullscreen' output mode and generally
+	They always work in `fullscreen` output mode and generally
 	support only a subset of video boards.
 
 	To function correctly these drivers require a correct
-	configuration of the `device_video_*' options.
+	configuration of the `device_video_*` options.
 
-	The `Generate' drivers are always the preferred choice.
+	The `Generate` drivers are always the preferred choice.
 
     System drivers
 	This set of drivers is able to use only the video modes
 	available on the operating system.
 
-	They can work in `fullscreen' mode, `window' mode and `zoom'
+	They can work in `fullscreen` mode, `window` mode and `zoom`
 	output mode using the video board hardware acceleration to
-	stretch the image. The default output mode is `window' if you
+	stretch the image. The default output mode is `window` if you
 	run the program in a window manager, otherwise the output
-	mode `fullscreen' is chosen.
+	mode `fullscreen` is chosen.
 
 	Please note that these drivers generally need to stretch the
 	image losing a lot in image quality and speed.
 
-	These drivers don't require any `device_video_*' options
+	These drivers don't require any `device_video_*` options
 	because they cannot control how the video modes are generated.
 
   Available Generate Drivers
@@ -71,10 +71,10 @@ Video Drivers
 	This driver is not available in X (when the environment DISPLAY
 	variable is defined).
 
-	The Frame Buffer device opened is `/dev/fb0' and `/dev/fb/0', you
+	The Frame Buffer device opened is `/dev/fb0` and `/dev/fb/0`, you
 	can change it setting the FRAMEBUFFER environment variable.
 
-	The generic Frame Buffer `vesafb' driver cannot be used because
+	The generic Frame Buffer `vesafb` driver cannot be used because
 	it doesn't allow the creation of new video modes. If it's your
 	only option you can use it through the SDL library.
 
@@ -88,7 +88,7 @@ Video Drivers
 	of the video mode.
 
 	To use these modes your video board must be supported
-	by a `svgalib' driver listed in the `cardlinx.txt' file.
+	by a `svgalib` driver listed in the `cardlinx.txt` file.
 	To use this driver you need to install the SVGALIB library
 	version 1.9.x.
 
@@ -96,12 +96,12 @@ Video Drivers
 	SVGALIB HorizSync and VertRefresh options in the
 	file /etc/vga/libvga.config file.
 	You must use a range equal or a bit larger than the range
-	specified with the AdvanceMAME `device_video_clock' option.
+	specified with the AdvanceMAME `device_video_clock` option.
 
 	This driver is not available in X (when the environment DISPLAY
 	variable is defined).
 
-	In the `contrib/svgalib' directory there are various
+	In the `contrib/svgalib` directory there are various
 	SVGALIB patches to fix some problems with recent video
 	boards, and to work with systems with kernel 2.6 and udev.
 
@@ -112,7 +112,7 @@ Video Drivers
 	All clocks, all RGB bit depths are available.
 
 	To use these modes your video board must be supported
-	by a `svgaline' driver listed in the `carddos.txt' file.
+	by a `svgaline` driver listed in the `carddos.txt` file.
 
 	This driver is completely independent of the VGA/VBE BIOS
 	of your board.
@@ -125,18 +125,18 @@ Video Drivers
 	All clocks, all RGB bit depths are available.
 
 	To use these modes your video board must be supported
-	by a `vbeline' driver listed in the `carddos.txt' file.
+	by a `vbeline` driver listed in the `carddos.txt` file.
 
 	These drivers work setting a video mode using the
 	default VBE2 services and tweak some hardware SVGA
 	registers to modify the obtained video mode.
-	The driver `vbe3' is an exception. It requires the
+	The driver `vbe3` is an exception. It requires the
 	presence of a VBE3 BIOS to change the frequency of the
 	desired video mode. Unfortunately the standard
 	VBE3 services don't support a resolution size change.
 
 	The resolution is changed modifying only the standard
-	VGA registers. This hack may or not may works.
+	VGA registers. This hack may or may not work.
 	Also the interlaced modes are only rarely supported
 	by the various VBE3 BIOS because they are very rarely
 	used in the standard PC monitors.
@@ -167,13 +167,13 @@ Video Drivers
 	All clocks, all RGB bit depths are available.
 
 	To use these modes your video board must be supported
-	by a `svgawin' driver listed in the `cardwin.txt' file.
+	by a `svgawin` driver listed in the `cardwin.txt` file.
 
 	To use this driver you need to install the included SVGAWIN
-	driver. Please read the `svgawin.txt' file carefully.
+	driver. Please read the `svgawin.txt` file carefully.
 
 	This driver is experimental. At present it's only tested on
-	Windows 2000 with a GeForce 2 board. It may not work will
+	Windows 2000 with a GeForce 2 board. It may not work with
 	all the other boards.
 
   Available System Drivers
@@ -187,7 +187,7 @@ Video Drivers
 
 	The output in the YUV mode is generally accelerated, and can
 	be used to scale the video output to an arbitrary size.
-	You can enable this feature with the `-device_video_output overlay'
+	You can enable this feature with the `-device_video_output overlay`
 	option.
 
 	You can change some options of this driver using the SDL specific
@@ -264,7 +264,7 @@ Input Drivers
 	For an emergency keyboard restore you can use the emergency
 	Linux SysRq key. Check:
 
-		:http:///usr/src/linux/Documentation/sysrq.txt
+		+http://www.kernel.org/doc/html/latest/admin-guide/sysrq.html
 
 	Leds control is supported.
 
@@ -281,7 +281,7 @@ Input Drivers
 	For an emergency keyboard restore you can use the emergency
 	Linux SysRq key. Check:
 
-		:http:///usr/src/linux/Documentation/sysrq.txt
+		+http://www.kernel.org/doc/html/latest/admin-guide/sysrq.html
 
 	Leds control is supported.
 
@@ -312,7 +312,7 @@ Input Drivers
 	For an emergency keyboard restore you can use the emergency
 	Linux SysRq key. Check:
 
-		:http:///usr/src/linux/Documentation/sysrq.txt
+		+http://www.kernel.org/doc/html/latest/admin-guide/sysrq.html
 
 	Leds control is not supported.
 
@@ -338,13 +338,12 @@ Input Drivers
 	It's able to autodetect all the present hardware.
 
 	This driver is also able to correctly report the type of devices
-	found. You should for example expects to have the gas pedal mapped
+	found. You should for example expect to have the gas pedal mapped
 	on the gas control of the game.
 
 	It can also be used with some custom devices connected at the
 	Parallel Port. Details on how to build these custom interfaces are
-	in the file:///usr/src/linux/Documentation/input/joystick-parport.txt
-	file.
+	in the file /usr/src/linux/Documentation/input/joystick-parport.txt.
 
 	It has a special support for the ACT Labs Lightgun to fix the wrong
 	behavior of the light-gun when shooting out of screen.
@@ -396,14 +395,14 @@ Input Drivers
 	SNES, PSX, N64 and other pads are in the Allegro sources.
 
     lgrawinput - Light Gun (Windows XP)
-	This driver works in Windows XP and it support lightguns
+	This driver works in Windows XP and it supports lightguns
 	using the Windows mouse interface.
 
 	It supports more than one lightgun at the same time
 	of the following types:
 
 	* SMOG Lightgun (http://lightgun.splinder.com/)
-	* Acts Labs Lightgun (http://www.act-labs.com/)
+	* Act Labs Lightgun (http://www.act-labs.com/)
 
 	The lightgun is automatically calibrated before
 	every use. You must move the lightgun over the whole
@@ -422,16 +421,16 @@ Input Drivers
 	For USB devices this driver doesn't require any configuration.
 	It's able to autodetect all the present hardware.
 
-	For serial mouse you must use the `inputattach' system
+	For serial mouse you must use the `inputattach` system
 	utility to attach the serial line at the event interface.
 	Generally this utility is available in the joystick
 	calibration package of your distribution. In this case it's
-	probably simpler to use the `raw' mouse driver.
+	probably simpler to use the `raw` mouse driver.
 
 	The mice are searched on the /dev/input/eventX devices.
 
     raw - Serial mouse (Linux)
-	This driver works in Linux and it communicates directly with
+	This driver works in Linux and communicates directly with
 	the configured serial mice. It also supports USB mice
 	using the Linux mousedev module which maps mice to the
 	/dev/input/mouseX devices.
@@ -463,7 +462,7 @@ Input Drivers
 	This driver works in DOS and it uses the Allegro library.
 
 	It supports up to 2 mice at the same time using the
-	special `optimous' driver present in the `contrib/' directory.
+	special `optimous` driver present in the `contrib/` directory.
 
     rawinput - Raw input interface (Windows)
 	This driver works in Windows XP using the raw input interface.
@@ -475,9 +474,9 @@ Input Drivers
 
 	This driver is the preferred choice for Windows XP.
 
-	Please note that this driver is not intented to be used in a window
+	Please note that this driver is not intended to be used in a window
 	environment. The application takes the control of the mouse and
-	doesn't allow to switch to other applications. It's mainly intented
+	doesn't allow to switch to other applications. It's mainly intended
 	for a fullscreen environment.
 
     cpn - CPN custom driver interface (Windows)
@@ -492,12 +491,12 @@ Input Drivers
 
 		+http://cpnmouse.sourceforge.net/
 
-	and in the `contrib/cpn' directory. Check the `install'
-	and `unknown' files for install instructions.
+	and in the `contrib/cpn` directory. Check the `install`
+	and `unknown` files for install instructions.
 
-	Please note that this driver is not intented to be used in a window 
+	Please note that this driver is not intended to be used in a window 
 	environment. The application takes the control of the mouse and 
-	doesn't allow to switch to other applications. It's mainly intented 
+	doesn't allow to switch to other applications. It's mainly intended 
 	for a fullscreen environment.
 
 Video Drivers Configuration
@@ -545,43 +544,43 @@ Video Drivers Configuration
 	Options for Windows:
 		svgawin - SVGA generated graphics modes with the
 			SVGAWIN included library. To use this driver you
-			need to install the `svgawin.sys' driver with the
-			`svgawin.exe' command line utility.
+			need to install the `svgawin.sys` driver with the
+			`svgawin.exe` command line utility.
 		svgawin/nv3_leg - SVGA legacy driver for nVidia boards.
 			If the new driver doesn't work try this one.
 		svgawin/savage_leg - SVGA legacy driver for S3 boards.
 			If the new driver doesn't work try this one.
 		sdl - SDL graphics and fake text modes.
 
-	Please note that to use the utilities `advv' and `advcfg' you
+	Please note that to use the utilities `advv` and `advcfg` you
 	must at least select a graphics and a text video driver. The
-	available text video drivers are `vgaline' for DOS, `slang',
-	`curses' for Linux and `sdl' for Windows.
+	available text video drivers are `vgaline` for DOS, `slang`,
+	`curses` for Linux and `sdl` for Windows.
 
 	You can force the detection of a specific model of video board
 	adding the name of the model driver after the driver name using
-	the `/' separator. For example to force the `vbe3' model
-	detection of the `vbeline' driver you must specify
-	`vbeline/vbe3'.
+	the `/` separator. For example to force the `vbe3` model
+	detection of the `vbeline` driver you must specify
+	`vbeline/vbe3`.
 
 	To get the list of all the available models try using the
-	`help' model name. A short help will be printed.
+	`help` model name. A short help will be printed.
 
 	Please note that forcing a specific video driver is discouraged.
 	Generally you don't need it.
 
 	For a more complete description of the drivers check the
-	previous `VIDEO DRIVER' section.
+	previous `VIDEO DRIVER` section.
 
-	Example to enable the `vbeline' and the `vgaline' drivers
+	Example to enable the `vbeline` and the `vgaline` drivers
 	with auto-detection for DOS:
 		:device_video vbeline vgaline
 
-	Example to force the `vbeline/vbe3' driver and the `vgaline'
+	Example to force the `vbeline/vbe3` driver and the `vgaline`
 	driver for DOS:
 		:device_video vbeline/vbe3 vgaline
 
-	Example to enable the `fb' and `slang' driver for Linux:
+	Example to enable the `fb` and `slang` driver for Linux:
 		:device_video fb slang
 
     device_video_output
@@ -596,21 +595,21 @@ Video Drivers Configuration
 		overlay - Use a YUV fullscreen overlay using the video board
 			hardware acceleration to display and stretch it.
 			This mode is available only in some environments, like
-			xv in X Window and DirectX in Windows. The specific
+			Xv in X Window and DirectX in Windows. The specific
 			color format used is YUY2.
 
     device_video_overlaysize
-	Select the favorite horizontal size to use with the `overlay'
+	Select the favorite horizontal size to use with the `overlay`
 	output mode. The program selects the nearest available video mode.
 
-	device_video_overlaysize auto | SIZE
+	:device_video_overlaysize auto | SIZE
 
 	Options:
 		auto - Use the size of the current video mode (default).
 			If not available tries 1280x1024.
 		SIZE - The user favorite horizontal size.
 
-	This option has effect only with the `overlay' output mode.
+	This option has effect only with the `overlay` output mode.
 
     device_video_cursor
 	Select the mouse cursor mode.
@@ -626,9 +625,9 @@ Video Drivers Configuration
 
   Generate Configuration Options
 	The following are the common video configuration options
-	available for all `generate' video drivers, i.e. all the
-	video drivers with the exception of `sdl' and `vbe'.
-	The `sdl' and `vbe' video drivers simply ignore these
+	available for all `generate` video drivers, i.e. all the
+	video drivers with the exception of `sdl` and `vbe`.
+	The `sdl` and `vbe` video drivers simply ignore these
 	options.
 
     device_video_clock
@@ -645,36 +644,36 @@ Video Drivers Configuration
 			by your video board. The higher value is the
 			video bandwidth of your monitor. If you
 			don't know these values you can start
-			with `5 - 100' which essentially enable any
+			with `5 - 100` which essentially enable any
 			video mode.
 		HORZ_CLOCK - Horizontal clock range in kHz.
-		VERT_CLOCK- Vertical clock range in Hz.
+		VERT_CLOCK - Vertical clock range in Hz.
 
-	For any range you can specify a single value like `60' or a
-	range of values like `50 - 60'. For multistandard TVs and monitors
-	you can use more clock specifications separating them with `;'.
+	For any range you can specify a single value like `60` or a
+	range of values like `50 - 60`. For multistandard TVs and monitors
+	you can use more clock specifications separating them with `;`.
 
 	For example:
 		:device_video_clock 5 - 50 / 15.62 / 50 ; 5 - 50 / 15.73 / 60
 
-	Check the `install.txt' file for examples and other information.
+	Check the `install.txt` file for examples and other information.
 
     device_video_modeline
 	Define a video modeline. The modeline format is compatible with
 	the format used by the Linux SVGALIB library and by the
-	XFree Window system.
+	XFree86/X.org system.
 
 	:device_video_modeline Name CLOCK HDE HRS HRE HT VDE VRS VRE VT
 	:	[-hsync] [-vsync] [+hsync] [+vsync] [doublescan] [interlace]
 
 	Options:
 		Name - Name of the video mode. You can use the quotes
-			'"` for the names with spaces.
+			`"` for the names with spaces.
 		CLOCK - Pixel clock in MHz
-		HDE HRS HRE HT - Horizontal `Display End',
-			`Retrace Start', `Retrace End', `Total'
-		VDE VRS VRE VT - Vertical `Display End',
-			`Retrace Start', `Retrace End', `Total'
+		HDE HRS HRE HT - Horizontal `Display End`,
+			`Retrace Start`, `Retrace End`, `Total`
+		VDE VRS VRE VT - Vertical `Display End`,
+			`Retrace Start`, `Retrace End`, `Total`
 		-hsync -vsync +hsync +vsync - Polarization mode.
 		doublescan - Doublescan mode.
 		interlace - Interlaced mode.
@@ -710,7 +709,7 @@ Video Drivers Configuration
 		:31500 0.800 0.020 0.120 0.060 0.914 0.019 0.004 0.063
 
 	Which one of these defaults is used depends on the setting of the 
-	`device_video_clock' option.
+	`device_video_clock` option.
 
     device_video_singlescan/doublescan/interlace
 	Limit the use of certain features.
@@ -724,8 +723,8 @@ Video Drivers Configuration
 			low-end driver allows it (default).
 		no - Disable completely the feature.
 
-    device_color_palette8/br8/bgr15/bgr16/bgr24/bgr32/yuy2
-	Limit the use of some bit depths. If you known that
+    device_color_palette8/bgr8/bgr15/bgr16/bgr24/bgr32/yuy2
+	Limit the use of some bit depths. If you know that
 	the program doesn't work well with a specific bit depth you
 	can disable it.
 
@@ -783,7 +782,7 @@ Video Drivers Configuration
 			and 31.25 MHz for DPI).
 
     device_fb_fastset
-	Don't set the video mode if it's expected to be idential at the
+	Don't set the video mode if it's expected to be identical to the
 	current one. This can be used to avoid a screen refresh
 	when not required.
 
@@ -795,23 +794,23 @@ Video Drivers Configuration
 
   vbeline Configuration Options
 	The following are the common video configuration options
-	available only for the `vbeline' DOS video driver.
+	available only for the `vbeline` DOS video driver.
 
     device_vbeline_mode
-	Select which `vbe' mode to use when generating `vbeline' modes.
+	Select which `vbe` mode to use when generating `vbeline` modes.
 
 	The use of this option is discouraged, it's present only for testing.
 
 	:device_vbeline_mode smaller | bigger | ...
 
 	Options:
-		smaller - Use the biggest `vbe' mode contained in
-			the `vbeline' mode (default).
-		bigger - Use the smallest `vbe' mode which contains
-			the `vbeline' mode.
-		smaller_upto640 - Like `smaller' but not
+		smaller - Use the biggest `vbe` mode contained in
+			the `vbeline` mode (default).
+		bigger - Use the smallest `vbe` mode which contains
+			the `vbeline` mode.
+		smaller_upto640 - Like `smaller` but not
 			bigger than 640x480.
-		bigger_upto640 - Like `bigger' but not
+		bigger_upto640 - Like `bigger` but not
 			bigger than 640x480.
 		320 - Use always the 320x240 mode.
 		400 - Use always the 400x300 mode.
@@ -821,11 +820,11 @@ Video Drivers Configuration
 
   svgaline Configuration Options
 	The following are the common video configuration options
-	available only for the `svgaline' DOS video driver.
+	available only for the `svgaline` DOS video driver.
 
     device_svgaline_skipboard
 	Selects how many board skip in the video card detection. If you have
-	more than a video card on your system you and the wrong one is
+	more than a video card on your system and the wrong one is
 	used you can force to skip an arbitrary number of video boards.
 
 	:device_svgaline_skipboard 0 | 1 | 2 | 3
@@ -853,11 +852,11 @@ Video Drivers Configuration
  
   svgawin Configuration Options
 	The following are the common video configuration options
-	available only for the `svgawin' Windows video driver.
+	available only for the `svgawin` Windows video driver.
 
     device_svgawin_skipboard
 	Selects how many board skip in the video card detection. If you have
-	more than a video card on your system you and the wrong one is
+	more than a video card on your system and the wrong one is
 	used you can force to skip an arbitrary number of video boards.
 
 	:device_svgawin_skipboard 0 | 1 | 2 | 3
@@ -949,48 +948,15 @@ Sound Drivers Configuration
 	:device_alsa_device DEVICE
 
 	Options:
-		DEVICE - Output device (default 'default').
+		DEVICE - Output device (default `default`).
 
-	Other possible choices generally are 'hw:0,0' for using the
-	frequency and format chosen directly by the hardware, or 'dmix'
+	Other possible choices generally are `hw:0,0` for using the
+	frequency and format chosen directly by the hardware, or `dmix`
 	for allow concurrent access to other applications at the
 	audio card.
 
 	Example:
 		:device_alsa_device dmix
-
-	If you want to configure the ALSA library to remap the `default' device
-	to the `dmix' device for all the applications, you can create
-	the `.asoundrc' file in your home directory with the following content:
-
-		:pcm.!default {
-		:	type plug
-		:	slave.pcm "dmixer"
-		:}
-		:
-		:pcm.dmixer  {
-		:	type dmix
-		:	ipc_key 1024
-		:	slave {
-		:		pcm "hw:0,0"
-		:		period_time 0
-		:		period_size 1024
-		:		buffer_size 16384
-		:		rate 44100
-		:	}
-		:	bindings {
-		:		0 0
-		:		1 1
-		:	}
-		:}
-		: 
-		:ctl.dmixer {
-		:	type hw
-		:	card 0
-		:}
-
-	Note that the suggested `.asoundrc' on the ALSA web site has a lower
-	`buffer_size' value (4096). For AdvanceMAME a bigger buffer is required.
 
     device_alsa_mixer
 	Select the alsa mixer device.
@@ -998,11 +964,11 @@ Sound Drivers Configuration
 	:device_alsa_mixer DEVICE
 
 	Options:
-		DEVICE - Mixer device. The special 'channel' value is
+		DEVICE - Mixer device. The special `channel` value is
 			used to adjust the volume changing the samples
 			instead of using the card mixer. Other values
-			like `default' are used to select the ALSA mixer.
-			(default 'channel').
+			like `default` are used to select the ALSA mixer.
+			(default `channel`).
 
   sdl Configuration Options
     device_sdl_samples
@@ -1010,7 +976,7 @@ Sound Drivers Configuration
 
 	The use of this option is discouraged, it's present only for testing.
 
-	device_sdl_samples 512 | 1024 | 2048 | 2560 | 3072 | 3584 | 4096 | 6144 | 8192
+	:device_sdl_samples 512 | 1024 | 2048 | 2560 | 3072 | 3584 | 4096 | 6144 | 8192
 
 	Options:
 		SAMPLES - Number of samples of an audio fragment
@@ -1103,8 +1069,8 @@ Input Drivers Configuration
 	Options for Windows:
 		sdl - SDL joystick interface.
 
-	For the `allegro/psxlpt*', `allegro/db9lpt*', `allegro/tgxlpt*'
-	drivers you can see the source file `advance/dos/jalleg.c'
+	For the `allegro/psxlpt*`, `allegro/db9lpt*`, `allegro/tgxlpt*`
+	drivers you can see the source file `advance/dos/jalleg.c`
 	for instructions on how to build the lpt interface. See also
 	the Allegro library source distribution.
 
@@ -1167,7 +1133,7 @@ Input Drivers Configuration
     device_raw_mousedev[0,1,2,3]
 	Select the mouse device to use.
 
-	device_raw_mousedev[0,1,2,3] auto | DEVICE
+	:device_raw_mousedev[0,1,2,3] auto | DEVICE
 
 	Options:
 		auto - Automatically map to /dev/mouse or /dev/input/mouseX.
@@ -1181,7 +1147,7 @@ Input Drivers Configuration
     device_lgrawinput_calibration
 	Select the type of calibration of the lightgun.
 
-	device_lgrawinput_calibration auto | none
+	:device_lgrawinput_calibration auto | none
 
 	Options:
 		auto - Automatically calibrates the lightgun before
@@ -1194,4 +1160,3 @@ Input Drivers Configuration
 
 Copyright
 	This file is Copyright (C) 2003, 2004, 2005 Andrea Mazzoleni.
-

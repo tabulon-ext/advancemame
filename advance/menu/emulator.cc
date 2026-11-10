@@ -101,6 +101,7 @@ emulator::emulator(const string& Aname, const string& Aexe_path, const string& A
 
 	exclude_missing_orig = exclude;
 	exclude_duplicate_orig = include;
+	exclude_clip_orig = include;
 }
 
 emulator::~emulator()
@@ -118,12 +119,14 @@ void emulator::attrib_load()
 {
 	exclude_missing_effective = exclude_missing_orig;
 	exclude_duplicate_effective = exclude_duplicate_orig;
+	exclude_clip_effective = exclude_clip_orig;
 }
 
 void emulator::attrib_save()
 {
 	exclude_missing_orig = exclude_missing_effective;
 	exclude_duplicate_orig = exclude_duplicate_effective;
+	exclude_clip_orig = exclude_clip_effective;
 }
 
 bool emulator::attrib_set(const string& value0, const string& value1)
@@ -133,6 +136,9 @@ bool emulator::attrib_set(const string& value0, const string& value1)
 			return false;
 	} else if (value0 == "duplicate") {
 		if (!tristate(exclude_duplicate_orig, value1))
+			return false;
+	} else if (value0 == "clip") {
+		if (!tristate(exclude_clip_orig, value1))
 			return false;
 	} else {
 		return false;
@@ -144,6 +150,7 @@ void emulator::attrib_get(adv_conf* config_context, const char* section, const c
 {
 	conf_string_set(config_context, section, tag, attrib_compile("missing", tristate(exclude_missing_orig)).c_str());
 	conf_string_set(config_context, section, tag, attrib_compile("duplicate", tristate(exclude_duplicate_orig)).c_str());
+	conf_string_set(config_context, section, tag, attrib_compile("clip", tristate(exclude_clip_orig)).c_str());
 }
 
 bool emulator::filter_working(const game& g) const
@@ -160,6 +167,11 @@ bool emulator::filter(const game& g) const
 	if (exclude_duplicate_effective == exclude && g.duplicate_get())
 		return false;
 	if (exclude_duplicate_effective == exclude_not && !g.duplicate_get())
+		return false;
+	resource res;
+	if (exclude_clip_effective == exclude && g.preview_find(res, &game::preview_clip_get))
+		return false;
+	if (exclude_clip_effective == exclude_not && !g.preview_find(res, &game::preview_clip_get))
 		return false;
 	return true;
 }
@@ -297,9 +309,9 @@ void emulator::load_dirlist(game_set& gar, const string& dirlist, const string& 
 	}
 }
 
-bool emulator::run_process(time_t& duration, const string& dir, int argc, const char** argv, bool ignore_error) const
+bool emulator::run_process(target_clock_t& duration, const string& dir, int argc, const char** argv, bool ignore_error) const
 {
-	time_t start, stop;
+	target_clock_t start, stop;
 
 	bool resume_error = false;
 
@@ -334,11 +346,11 @@ bool emulator::run_process(time_t& duration, const string& dir, int argc, const 
 
 	log_std(("menu: run '%s'\n", cmdline.str().c_str()));
 
-	start = time(0);
+	start = target_clock() / 1000000;
 
 	int r = target_spawn(argv[0], argv);
 
-	stop = time(0);
+	stop = target_clock() / 1000000;
 
 	if (stop - start > 8)
 		duration = stop - start;
@@ -425,7 +437,7 @@ bool emulator::run(const game& g, const game* bios, unsigned orientation, bool s
 	argc = compile(g, argv, argc, user_cmd_arg, orientation);
 	argv[argc] = 0;
 
-	time_t duration;
+	target_clock_t duration;
 	bool ret = run_process(duration, exe_dir_get(), argc, argv, ignore_error);
 
 	for (int i = 0; i < argc; ++i)
@@ -677,7 +689,15 @@ bool mame_info::update_xml()
 		argv[argc++] = strdup("-listxml");
 	argv[argc] = 0;
 
-	int r = target_spawn_redirect(argv[0], argv, cpath_export(xml_file));
+	int r;
+	if (has_bare_xml()) {
+		r = target_spawn_redirect(argv[0], argv, cpath_export(xml_file));
+	} else {
+		const char* filter_argv[2];
+		filter_argv[0] = "advbare";
+		filter_argv[1] = 0;
+		r = target_spawn_pipe(argv[0], argv, filter_argv[0], filter_argv, cpath_export(xml_file));
+	}
 
 	for (int i = 0; i < argc; ++i)
 		free(const_cast<char*>(argv[i]));
@@ -718,15 +738,21 @@ bool mame_info::load_game_xml(game_set& gar)
 	ifstream f(cpath_export(xml_file), ios::in | ios::binary);
 	if (!f) {
 		target_err("Error opening the '%s' information file '%s'.\n", user_name_get().c_str(), cpath_export(xml_file));
-		target_err("Try running manually the command: '%s -listxml > %s'.\n", user_exe_path.c_str(), cpath_export(xml_file));
+		if (has_bare_xml())
+			target_err("Try running manually the command: '%s -listbare > %s'.\n", user_exe_path.c_str(), cpath_export(xml_file));
+		else
+			target_err("Try running manually the command: '%s -listxml | advbare > %s'.\n", user_exe_path.c_str(), cpath_export(xml_file));
 		return false;
 	}
+	target_clock_t t0 = target_clock();
+	unsigned prev_games = gar.size();
 	if (!load_xml(f, gar)) {
 		f.close();
 		target_err("Error reading the '%s' information from file '%s'.\n", user_name_get().c_str(), cpath_export(xml_file));
 		return false;
 	}
 	f.close();
+	log_std(("startup:     load_game_xml '%s': %.2f ms (%u games parsed)\n", user_name_get().c_str(), (double)(target_clock() - t0) * 1000.0 / TARGET_CLOCKS_PER_SEC, (unsigned)(gar.size() - prev_games)));
 
 	return true;
 }
@@ -751,7 +777,10 @@ bool mame_info::load_game(game_set& gar, bool quiet)
 			return load_game_xml(gar);
 		}
 
-		target_err("Error generating the '%s' information file with -listxml.\n", user_name_get().c_str());
+		if (has_bare_xml())
+			target_err("Error generating the '%s' information file with -listbare.\n", user_name_get().c_str());
+		else
+			target_err("Error generating the '%s' information file with -listxml and advbare.\n", user_name_get().c_str());
 	}
 
 	return false;
@@ -814,6 +843,7 @@ int mame_mame::attrib_run(int x, int y)
 	ch.insert(ch.end(), choice("Parent or Clone", " Only\tParent", " Only\tClone", exclude_clone_effective, 0));
 	ch.insert(ch.end(), choice("Any Screen Type", " Only\tScreen Raster", " Only\tScreen Vector", exclude_vector_effective, 0));
 	ch.insert(ch.end(), choice("Any Orientation", " Only\tHorizontal", " Only\tVertical", exclude_vertical_effective, 0));
+	ch.insert(ch.end(), choice("Clip", exclude_clip_effective, 0));
 	ch.insert(ch.end(), choice("Neogeo", exclude_neogeo_effective, 0));
 	ch.insert(ch.end(), choice("Cassette", exclude_deco_effective, 0));
 	ch.insert(ch.end(), choice("PlayChoice-10", exclude_playchoice_effective, 0));
@@ -829,9 +859,10 @@ int mame_mame::attrib_run(int x, int y)
 		exclude_clone_effective = ch[3].tristate_get();
 		exclude_vector_effective = ch[4].tristate_get();
 		exclude_vertical_effective = ch[5].tristate_get();
-		exclude_neogeo_effective = ch[6].tristate_get();
-		exclude_deco_effective = ch[7].tristate_get();
-		exclude_playchoice_effective = ch[8].tristate_get();
+		exclude_clip_effective = ch[6].tristate_get();
+		exclude_neogeo_effective = ch[7].tristate_get();
+		exclude_deco_effective = ch[8].tristate_get();
+		exclude_playchoice_effective = ch[9].tristate_get();
 	}
 
 	return key;
@@ -966,7 +997,7 @@ bool mame_mame::run(const game& g, const game* bios, unsigned orientation, bool 
 	argc = compile(g, argv, argc, user_cmd_arg, orientation);
 	argv[argc] = 0;
 
-	time_t duration;
+	target_clock_t duration;
 	bool ret = run_process(duration, exe_dir_get(), argc, argv, ignore_error);
 
 	for (int i = 0; i < argc; ++i)
@@ -1485,6 +1516,7 @@ int mame_mess::attrib_run(int x, int y)
 	ch.insert(ch.end(), choice("Parent or Clone", " Only\tParent", " Only\tClone", exclude_clone_effective, 0));
 	ch.insert(ch.end(), choice("Any Screen Type", " Only\tScreen Raster", " Only\tScreen Vector", exclude_vector_effective, 0));
 	ch.insert(ch.end(), choice("Any Orientation", " Only\tHorizontal", " Only\tVertical", exclude_vertical_effective, 0));
+	ch.insert(ch.end(), choice("Clip", exclude_clip_effective, 0));
 	ch.insert(ch.end(), choice("With BIOS or not", " Only\tWith BIOS", " Only\tWithout BIOS", exclude_empty_effective, 0));
 
 	choice_bag::iterator i = ch.begin();
@@ -1498,7 +1530,8 @@ int mame_mess::attrib_run(int x, int y)
 		exclude_clone_effective = ch[3].tristate_get();
 		exclude_vector_effective = ch[4].tristate_get();
 		exclude_vertical_effective = ch[5].tristate_get();
-		exclude_empty_effective = ch[6].tristate_get();
+		exclude_clip_effective = ch[6].tristate_get();
+		exclude_empty_effective = ch[7].tristate_get();
 	}
 
 	return key;
@@ -1800,7 +1833,7 @@ bool dmess::run(const game& g, const game* bios, unsigned orientation, bool set_
 
 	argv[argc] = 0;
 
-	time_t duration;
+	target_clock_t duration;
 	bool ret = run_process(duration, exe_dir_get(), argc, argv, ignore_error);
 
 	for (int i = 0; i < argc; ++i)
@@ -2235,7 +2268,7 @@ bool advmess::run(const game& g, const game* bios, unsigned orientation, bool se
 
 	argv[argc] = 0;
 
-	time_t duration;
+	target_clock_t duration;
 	bool ret = run_process(duration, exe_dir_get(), argc, argv, ignore_error);
 
 	for (int i = 0; i < argc; ++i)
@@ -2296,6 +2329,7 @@ int raine_info::attrib_run(int x, int y)
 	ch.insert(ch.end(), choice("Working or Preliminary", " Only\tWorking", " Only\tPreliminary", exclude_bad_effective, 0));
 	ch.insert(ch.end(), choice("Parent or Clone", " Only\tParent", " Only\tClone", exclude_clone_effective, 0));
 	ch.insert(ch.end(), choice("Any Orientation", " Only\tHorizontal", " Only\tVertical", exclude_vertical_effective, 0));
+	ch.insert(ch.end(), choice("Clip", exclude_clip_effective, 0));
 
 	choice_bag::iterator i = ch.begin();
 
@@ -2307,6 +2341,7 @@ int raine_info::attrib_run(int x, int y)
 		exclude_bad_effective = ch[2].tristate_get();
 		exclude_clone_effective = ch[3].tristate_get();
 		exclude_vertical_effective = ch[4].tristate_get();
+		exclude_clip_effective = ch[5].tristate_get();
 	}
 
 	return key;
@@ -2678,7 +2713,7 @@ bool draine::run(const game& g, const game* bios, unsigned orientation, bool set
 	argc = compile(g, argv, argc, user_cmd_arg, orientation);
 	argv[argc] = 0;
 
-	time_t duration;
+	target_clock_t duration;
 	bool ret = run_process(duration, exe_dir_get(), argc, argv, ignore_error);
 
 	for (int i = 0; i < argc; ++i)
@@ -2707,6 +2742,7 @@ int generic::attrib_run(int x, int y)
 
 	ch.insert(ch.end(), choice("Present or Missing", " Only\tPresent", " Only\tMissing", exclude_missing_effective, 0));
 	ch.insert(ch.end(), choice("Unique or Duplicate", " Only\tUnique", " Only\tDuplicate", exclude_duplicate_effective, 0));
+	ch.insert(ch.end(), choice("Clip", exclude_clip_effective, 0));
 
 	choice_bag::iterator i = ch.begin();
 
@@ -2715,6 +2751,7 @@ int generic::attrib_run(int x, int y)
 	if (key == EVENT_ENTER) {
 		exclude_missing_effective = ch[0].tristate_get();
 		exclude_duplicate_effective = ch[1].tristate_get();
+		exclude_clip_effective = ch[2].tristate_get();
 	}
 
 	return key;

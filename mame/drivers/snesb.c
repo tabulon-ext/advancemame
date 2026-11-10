@@ -1,0 +1,2250 @@
+// license:LGPL-2.1+
+// copyright-holders:Tomasz Slanina, Peter Ferrie,Stephane Humbert
+/***************************************************************************
+
+ Arcade games (hacks of console games) running on SNES harware.
+
+ Driver (based on nss.c ) by Tomasz Slanina  analog[at]op.pl
+
+    Supported games:
+    - Killer Instinct
+    - Final Fight 2
+    - Final Fight 3
+    - Sonic Blast Man 2
+    - Iron (bootleg of Iron Commando)
+    - Ghost Chaser Densei
+    - Gundam Wing Endless Duel
+    - Legend
+    - Teenage Mutant Ninja Turtles - Mutant Warriors
+    - Venom & Spider-Man - Separation Anxiety
+    - Wild Guns
+
+TODO:
+
+ - ffight2b -  dipswitches ($7eadd7 ?)
+ - sblast2b - decrypt (xor+swaps)
+ - kiinstb -  fix gfx glitches, missing texts
+
+
+
+  Final Fight 2 PCB layout:
+  ------------------------
+
+ |----------------------------------------------------------------------------|
+ | |-----------|                                                              |
+ | |           |        21.47727 MHz      24.576 MHz                          |
+ | | Lattice   |                                                              |
+ | | pLSI      |               |--------|   |--------|          HM65256       |
+ | | 1024-60LJ |  |--------|   |        |   |        |                        |
+ | |           |  |        |   | 86A621 |   | 86A537 |                        |
+ | |-----------|  | 86A623 |   |  JDCF  |   |  JDCF  |                        |
+ |                |  JDCF  |   |        |   |        |          D42832C       |
+ |    ff2_1.u8    |        |   |--------|   |--------|                        |
+ |                |--------|                                                  |
+ |                             |--------|   |--------|                        |
+ |    ff2_2.u7    |--------|   |        |   |        |          KM62256       |
+ |                |        |   | 86A617 |   | 86A618 |                        |
+ |                | 86A540 |   |  JDCF  |   |  JDKF  |                        |
+ |    ff2_3.u6    |  JDKF  |   |        |   |        |                        |
+ |                |        |   |--------|   |--------|          KM62256       |
+ |                |--------|                                                  |
+ |     GL324                  D41464C     D41464C                             |
+ |                                                                            |
+ |                            D41464C     D41464C         DSW2      DSW1      |
+ |                                                                            |
+ |                              7414        74245        74245     74245      |
+ |                                                                            |
+ |    uPC1242H       VR1       GD4021B     GD4021B      GD4021B   GD4021B     |
+ |                                                                            |
+ |                                                                            |
+ |               |---|              JAMMA                 |---|               |
+ |---------------|   |------------------------------------|   |---------------|
+
+  Killer Instinct PCB Info:
+  --------------------------
+
+    PQFP 100(?)pin chip marked "SP-BE0"
+    PQFP 100(?)pin chip marked "SP-BH0"
+    PQFP 100(?)pin chip marked "SP-AF0"
+    Lattice pLSI 1024-60LJ B604S03
+    6116 SRAM    x2
+    AS7C256 SRAM x8
+    jumper pack (12)
+    dsw8         x2
+    Xtal 24.576 MHz
+    Xtal 21.47727 MHz
+    volume pot
+    27c801       x4
+    two empty eprom sockets
+
+    It's SNES version of KI with few mods (removed copyright messages,
+    extra code for coin input, etc).
+
+    256 bytes of RAM ( mapped to reserved area) are shared with some
+    device (probably Lattice PLD) used for handle coin inputs and dips
+
+    Data lines of eproms are bitswapped.
+
+***************************************************************************/
+#include "driver.h"
+#include "includes/snes.h"
+
+extern DRIVER_INIT( snes );
+extern DRIVER_INIT( snes_hirom );
+
+static INT8 *shared_ram;
+static INT8 *shared_ram2;
+static UINT8 ffight2b_coins;
+
+static READ8_HANDLER(sharedram_r)
+{
+	static INT32 oldinput=0;
+	INT32 coincnt;
+	
+ 	INT32	input=readinputport(13);
+
+	if(input&3)
+	{
+		if( ((input&1)==1)&&((oldinput&1)==0))	{shared_ram[0]++;}
+
+		coincnt=shared_ram[0];
+
+		if(coincnt>99){coincnt=99;}
+
+		shared_ram[0xb]=(coincnt/10)+'0';
+		shared_ram[0xa]=(coincnt%10)+'0';
+	}
+	oldinput=input;
+	return shared_ram[offset];
+}
+
+static WRITE8_HANDLER(sharedram_w)
+{
+	shared_ram[offset]=data;
+}
+
+static READ8_HANDLER(ffight2b_coin_r)
+{
+	static INT32 oldinput=0;
+ 	INT32	input=readinputport(13);
+
+	if( ((input&1)==1)&&((oldinput&1)==0))
+	{
+		INT32 coin_cnt=(ffight2b_coins&0xf)+10*(ffight2b_coins>>4);
+		if(++coin_cnt>99) coin_cnt=99;
+		ffight2b_coins=(coin_cnt%10)|((coin_cnt/10)<<4);
+	}
+	oldinput=input;
+	return ffight2b_coins;
+}
+
+static READ8_HANDLER(iron_770071_r)
+{
+ 	return readinputport(12);
+}
+ 
+static READ8_HANDLER(iron_770073_r)
+{
+ 	return readinputport(13);
+}
+ 
+static READ8_HANDLER(iron_770079_r)
+{
+ 	return readinputport(14);
+}
+
+/* Denseib */
+
+static READ8_HANDLER(denseib_770071_r)
+{
+	return readinputport(12);
+}
+ 
+static READ8_HANDLER(denseib_770079_r)
+{
+	return readinputport(14);
+}
+
+/* Sonic blast man 2 turbo */
+
+static READ8_HANDLER(sb2b_75bd37_r)
+{
+	/* protection check */
+	static UINT8 cnt=0;
+ 	return ++cnt;
+}
+ 
+static READ8_HANDLER(sb2b_6a6xxx_r)
+{
+	/* protection checks */
+	switch(offset)
+	{
+		case 0x26f: return 0xb1;
+		case 0x3e0:	return 0x9e;
+		case 0x5c8: return 0xf4;
+		case 0x94b: return 0x3a;
+		case 0xd1a:	return 0xc5;
+		case 0xfb7:	return 0x47;
+	}	
+
+	logerror("Unknown protection read read %x @ %x\n",offset, activecpu_get_pc());
+	return 0;
+}
+ 
+static READ8_HANDLER(sb2b_770071_r)
+{
+ 	return readinputport(12);
+}
+
+static READ8_HANDLER(sb2b_770079_r)
+{
+ 	return readinputport(13);
+}
+ 
+static READ8_HANDLER(sb2b_7xxx_r)
+{
+	return snes_ram[0xc07000 + offset];
+}
+
+/* Endless Duel */
+READ8_HANDLER(endless_580xxx_r)
+{
+	/* protection checks */
+	switch(offset)
+	{
+		case 0x2bc: return 0xb4;
+		case 0x36a: return 0x8a;
+		case 0x7c1: return 0xd9;
+		case 0x956: return 0xa5;
+		case 0xe83: return 0x6b;
+	}
+
+	return 0;
+}
+
+static UINT8 cnt;
+
+READ8_HANDLER(endless_624b7f_r)
+{
+	/* protection check */
+	return ++cnt;
+}
+
+READ8_HANDLER(endless_800b_r)
+{
+	if (!offset)
+	{
+		return 0x50;
+	}
+
+	return 0xe8;
+}
+
+READ8_HANDLER(sharedram2_r)
+{
+	return shared_ram2[offset];
+}
+
+WRITE8_HANDLER(sharedram2_w)
+{
+	shared_ram2[offset]=data;
+}
+
+/* Rushing Beat Shura */
+
+READ8_HANDLER(rushbets_75axxx_r)
+{
+/* protection checks */
+	switch(offset)
+	{
+		case 0xf49: return 0xe3;
+		case 0x05a: return 0xf4;
+		case 0x16b: return 0x05;
+		case 0x27c: return 0x16;
+		case 0x38d: return 0x27;
+	}
+
+//	logerror("Unknown protection read %x @ %x\n",offset, m_maincpu->pc());
+
+	return 0;
+}
+
+READ8_HANDLER(rushbets_5b8e3c_r)
+{
+	/* protection check */
+	return ++cnt;
+}
+
+/* Wild Guns */
+READ8_HANDLER(wldgunsb_722262_r)
+{
+	// PC 2e2f6
+	return 0x2b;
+} 
+
+READ8_HANDLER(wldgunsb_723364_r)
+{
+	// PC b983
+	return 0x93;
+}
+
+READ8_HANDLER(wldgunsb_721197_r)
+{
+	// PC 2e30c
+	return 0xe4;
+}
+
+READ8_HANDLER(wldgunsb_72553b_r)
+{
+	// PC 2e216
+	return 0xbf;
+}
+
+READ8_HANDLER(wldgunsb_72443a_r)
+{
+	// PC 2e322
+	return 0x66;
+}
+
+READ8_HANDLER(tmntmwb_7103cd_r)
+{
+	return 0x8c;
+}
+ 
+READ8_HANDLER(tmntmwb_7065f0_r)
+{
+	return 0x31;
+}
+ 
+READ8_HANDLER(tmntmwb_7132cc_r)
+{
+	return 0x5a;
+}
+ 
+READ8_HANDLER(tmntmwb_7010f1_r)
+{
+	return 0x47;
+}
+
+static UINT8 piratdwb_latch, piratdwb_pending, piratdwb_prot_nmi, piratdwb_coin;
+
+static READ8_HANDLER( piratdwb_latch_r )
+{
+	return piratdwb_latch;
+}
+
+static WRITE8_HANDLER( piratdwb_latch_ack_w )
+{
+	piratdwb_pending = 0;
+}
+
+static READ8_HANDLER( piratdwb_status_r )
+{
+	return piratdwb_pending | (piratdwb_prot_nmi ? 0 : 2);
+}
+
+static READ8_HANDLER( piratdwb_dsw_r )
+{
+	return readinputportbytag("PIRATE_DSW");
+}
+
+static WRITE16_HANDLER( piratdwb_latch_w )
+{
+	if (ACCESSING_MSB)
+	{
+		piratdwb_latch = data >> 8;
+		piratdwb_pending = 1;
+	}
+}
+
+static WRITE16_HANDLER( piratdwb_nmi_ack_w )
+{
+	if (ACCESSING_MSB)
+	{
+		piratdwb_prot_nmi = 0;
+		cpunum_set_input_line(2, 7, CLEAR_LINE);
+	}
+}
+
+static READ16_HANDLER( piratdwb_coin_r )
+{
+	return readinputportbytag("PIRATE_COIN");
+}
+
+static INTERRUPT_GEN( piratdwb_coin_poll )
+{
+	UINT8 coin = readinputportbytag("PIRATE_COIN") & 2;
+	if (coin != piratdwb_coin)
+	{
+		piratdwb_coin = coin;
+		piratdwb_prot_nmi = 1;
+		cpunum_set_input_line(2, 7, ASSERT_LINE);
+	}
+}
+
+static ADDRESS_MAP_START( piratdwb_68k_map, ADDRESS_SPACE_PROGRAM, 16 )
+	AM_RANGE(0x000000, 0x01ffff) AM_ROM
+	AM_RANGE(0x04e000, 0x04ffff) AM_RAM
+	AM_RANGE(0x050000, 0x0503ff) AM_RAM
+	AM_RANGE(0x080000, 0x080001) AM_WRITE(piratdwb_latch_w)
+	AM_RANGE(0x100000, 0x100001) AM_READ(piratdwb_coin_r)
+	AM_RANGE(0x180000, 0x180001) AM_WRITE(piratdwb_nmi_ack_w)
+ADDRESS_MAP_END
+
+static MACHINE_RESET( piratdwb )
+{
+	piratdwb_latch = piratdwb_pending = piratdwb_prot_nmi = piratdwb_coin = 0;
+	machine_reset_snes();
+}
+
+static ADDRESS_MAP_START( snesb_map, ADDRESS_SPACE_PROGRAM, 8)
+	AM_RANGE(0x000000, 0x2fffff) AM_READWRITE(snes_r_bank1, snes_w_bank1)	/* I/O and ROM (repeats for each bank) */
+	AM_RANGE(0x300000, 0x3fffff) AM_READWRITE(snes_r_bank2, snes_w_bank2)	/* I/O and ROM (repeats for each bank) */
+	AM_RANGE(0x400000, 0x5fffff) AM_READWRITE(snes_r_bank3, MWA8_ROM)	/* ROM (and reserved in Mode 20) */
+	AM_RANGE(0x600000, 0x6fffff) AM_READWRITE(snes_r_bank6, snes_w_bank6)	/* used by Mode 20 DSP-1 */
+	AM_RANGE(0x700000, 0x77ffff) AM_READWRITE(snes_r_sram, snes_w_sram)	/* 256KB Mode 20 save ram + reserved from 0x8000 - 0xffff */
+//    AM_RANGE(0x780000, 0x7dffff) AM_NOP					/* Reserved */
+	AM_RANGE(0x7e0000, 0x7fffff) AM_RAM					/* 8KB Low RAM, 24KB High RAM, 96KB Expanded RAM */
+	AM_RANGE(0x800000, 0xffffff) AM_READWRITE(snes_r_bank4, snes_w_bank4)	/* Mirror and ROM */
+ADDRESS_MAP_END
+
+static READ8_HANDLER( spc_ram_100_r )
+{
+	return spc_ram_r(offset + 0x100);
+}
+
+static WRITE8_HANDLER( spc_ram_100_w )
+{
+	spc_ram_w(offset + 0x100, data);
+}
+
+static ADDRESS_MAP_START( spc_mem, ADDRESS_SPACE_PROGRAM, 8 )
+	AM_RANGE(0x0000, 0x00ef) AM_READWRITE(spc_ram_r, spc_ram_w) AM_BASE(&spc_ram)   	/* lower 32k ram */
+	AM_RANGE(0x00f0, 0x00ff) AM_READWRITE(spc_io_r, spc_io_w)   	/* spc io */
+	AM_RANGE(0x0100, 0xffff) AM_WRITE(spc_ram_100_w)
+	AM_RANGE(0x0100, 0xffbf) AM_READ(spc_ram_100_r)
+	AM_RANGE(0xffc0, 0xffff) AM_READ(spc_ipl_r)
+ADDRESS_MAP_END
+
+static INPUT_PORTS_START( kinstb )
+	PORT_START		/* IN 0 : Joypad 1 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P1 Button A") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P1 Button X") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P1 Button L") PORT_PLAYER(1)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P1 Button R") PORT_PLAYER(1)
+	PORT_START		/* IN 1 : Joypad 1 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P1 Button B") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P1 Button Y") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("P1 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START1 ) PORT_NAME("P1 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(1)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(1)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(1)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(1)
+
+	PORT_START		/* IN 2 : Joypad 2 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P2 Button A") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P2 Button X") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P2 Button L") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P2 Button R") PORT_PLAYER(2)
+	PORT_START		/* IN 3 : Joypad 2 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P2 Button B") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P2 Button Y") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("P2 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START2 ) PORT_NAME("P2 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(2)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(2)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(2)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(2)
+
+	PORT_START		/* IN 4 : Joypad 3 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P3 Button A") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P3 Button X") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P3 Button L") PORT_PLAYER(3)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P3 Button R") PORT_PLAYER(3)
+	PORT_START		/* IN 5 : Joypad 3 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P3 Button B") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P3 Button Y") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE3 ) PORT_NAME("P3 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START3 ) PORT_NAME("P3 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(3)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(3)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(3)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(3)
+
+	PORT_START		/* IN 6 : Joypad 4 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P4 Button A") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P4 Button X") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P4 Button L") PORT_PLAYER(4)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P4 Button R") PORT_PLAYER(4)
+	PORT_START		/* IN 7 : Joypad 4 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P4 Button B") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P4 Button Y") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE4 ) PORT_NAME("P4 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START4 ) PORT_NAME("P4 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(4)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(4)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(4)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(4)
+
+	PORT_START		/* IN 8 : Internal switches */
+	PORT_DIPNAME( 0x1, 0x1, "Enforce 32 sprites/line" )
+	PORT_DIPSETTING(   0x0, DEF_STR( No )  )
+	PORT_DIPSETTING(   0x1, DEF_STR( Yes ) )
+
+#ifdef MAME_DEBUG
+	PORT_START	/* IN 9 : debug switches */
+	PORT_DIPNAME( 0x3, 0x0, "Browse tiles" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x1, "2bpl"  )
+	PORT_DIPSETTING(   0x2, "4bpl"  )
+	PORT_DIPSETTING(   0x3, "8bpl"  )
+	PORT_DIPNAME( 0xc, 0x0, "Browse maps" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x4, "2bpl"  )
+	PORT_DIPSETTING(   0x8, "4bpl"  )
+	PORT_DIPSETTING(   0xc, "8bpl"  )
+
+	PORT_START	/* IN 10 : debug switches */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle BG 1") PORT_PLAYER(2)
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle BG 2") PORT_PLAYER(2)
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle BG 3") PORT_PLAYER(2)
+	PORT_BIT( 0x8, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle BG 4") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Objects") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle Main/Sub") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle Back col") PORT_PLAYER(3)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle Windows") PORT_PLAYER(3)
+
+	PORT_START	/* IN 11 : debug input */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Pal prev")
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Pal next")
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Transparency") PORT_PLAYER(4)
+#else
+	PORT_START	/* IN 9 : debug switches */
+	PORT_START	/* IN 10 : debug switches */
+	PORT_START	/* IN 11 : debug input */
+#endif
+
+	PORT_START	/* IN 12 : dip-switches */
+
+	PORT_START	/* IN 13 : coins */
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_COIN1 )
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_COIN2 )
+
+INPUT_PORTS_END
+
+#define PORT_DIPUNKNOWN_DIPLOC(a,b,c)
+
+static INPUT_PORTS_START( ffight2b )
+	PORT_START		/* IN 0 : Joypad 1 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P1 Button A") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P1 Button X") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P1 Button L") PORT_PLAYER(1)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P1 Button R") PORT_PLAYER(1)
+	PORT_START		/* IN 1 : Joypad 1 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P1 Button B") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P1 Button Y") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("P1 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START1 ) PORT_NAME("P1 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(1)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(1)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(1)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(1)
+
+	PORT_START		/* IN 2 : Joypad 2 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P2 Button A") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P2 Button X") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P2 Button L") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P2 Button R") PORT_PLAYER(2)
+	PORT_START		/* IN 3 : Joypad 2 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P2 Button B") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P2 Button Y") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("P2 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START2 ) PORT_NAME("P2 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(2)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(2)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(2)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(2)
+
+	PORT_START		/* IN 4 : Joypad 3 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P3 Button A") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P3 Button X") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P3 Button L") PORT_PLAYER(3)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P3 Button R") PORT_PLAYER(3)
+	PORT_START		/* IN 5 : Joypad 3 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P3 Button B") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P3 Button Y") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE3 ) PORT_NAME("P3 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START3 ) PORT_NAME("P3 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(3)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(3)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(3)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(3)
+
+	PORT_START		/* IN 6 : Joypad 4 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P4 Button A") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P4 Button X") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P4 Button L") PORT_PLAYER(4)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P4 Button R") PORT_PLAYER(4)
+	PORT_START		/* IN 7 : Joypad 4 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P4 Button B") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P4 Button Y") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE4 ) PORT_NAME("P4 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START4 ) PORT_NAME("P4 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(4)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(4)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(4)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(4)
+
+	PORT_START		/* IN 8 : Internal switches */
+	PORT_DIPNAME( 0x1, 0x1, "Enforce 32 sprites/line" )
+	PORT_DIPSETTING(   0x0, DEF_STR( No )  )
+	PORT_DIPSETTING(   0x1, DEF_STR( Yes ) )
+
+#ifdef MAME_DEBUG
+	PORT_START	/* IN 9 : debug switches */
+	PORT_DIPNAME( 0x3, 0x0, "Browse tiles" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x1, "2bpl"  )
+	PORT_DIPSETTING(   0x2, "4bpl"  )
+	PORT_DIPSETTING(   0x3, "8bpl"  )
+	PORT_DIPNAME( 0xc, 0x0, "Browse maps" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x4, "2bpl"  )
+	PORT_DIPSETTING(   0x8, "4bpl"  )
+	PORT_DIPSETTING(   0xc, "8bpl"  )
+
+	PORT_START	/* IN 10 : debug switches */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle BG 1") PORT_PLAYER(2)
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle BG 2") PORT_PLAYER(2)
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle BG 3") PORT_PLAYER(2)
+	PORT_BIT( 0x8, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle BG 4") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Objects") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle Main/Sub") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle Back col") PORT_PLAYER(3)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle Windows") PORT_PLAYER(3)
+
+	PORT_START	/* IN 11 : debug input */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Pal prev")
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Pal next")
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Transparency") PORT_PLAYER(4)
+#else
+	PORT_START	/* IN 9 : debug switches */
+	PORT_START	/* IN 10 : debug switches */
+	PORT_START	/* IN 11 : debug input */
+#endif
+
+	PORT_START	/* IN 12 : dip-switches */
+	PORT_DIPNAME( 0x01, 0x01, "Player Bonus" ) PORT_DIPLOCATION("SW1:1")
+	PORT_DIPSETTING(    0x01, DEF_STR( No ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( Yes ) )
+	PORT_DIPNAME( 0x06, 0x04, "Game Level" ) PORT_DIPLOCATION("SW1:2,3")
+	PORT_DIPSETTING(    0x00, DEF_STR( Hardest ) )
+	PORT_DIPSETTING(    0x02, DEF_STR( Hard ) )
+	PORT_DIPSETTING(    0x04, DEF_STR( Normal ) )
+	PORT_DIPSETTING(    0x06, DEF_STR( Easy ) )
+	PORT_DIPNAME( 0x18, 0x08, DEF_STR( Lives ) ) PORT_DIPLOCATION("SW1:4,5")
+	PORT_DIPSETTING(    0x00, "4" )
+	PORT_DIPSETTING(    0x08, "3" )
+	PORT_DIPSETTING(    0x10, "2" )
+	PORT_DIPSETTING(    0x18, "1" )
+	PORT_DIPNAME( 0xe0, 0x00, DEF_STR( Coin_A ) ) PORT_DIPLOCATION("SW1:6,7,8")
+	PORT_DIPSETTING(    0x20, DEF_STR( 4C_1C ) )
+	PORT_DIPSETTING(    0x40, DEF_STR( 3C_1C ) )
+	PORT_DIPSETTING(    0x60, DEF_STR( 2C_1C ) )
+	PORT_DIPSETTING(    0x00, DEF_STR( 1C_1C ) )
+/*  PORT_DIPSETTING(    0xe0, DEF_STR( 1C_1C ) ) */
+	PORT_DIPSETTING(    0xc0, DEF_STR( 1C_2C ) )
+	PORT_DIPSETTING(    0xa0, DEF_STR( 1C_3C ) )
+	PORT_DIPSETTING(    0x80, DEF_STR( 1C_4C ) )
+
+	PORT_START	/* IN 13 : coins */
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_COIN1 )
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_COIN2 )
+
+INPUT_PORTS_END
+
+INPUT_PORTS_START( iron )
+	PORT_START//("PAD1L")		/* IN 0 : Joypad 1 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P1 Button A") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P1 Button X") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P1 Button L") PORT_PLAYER(1)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P1 Button R") PORT_PLAYER(1)
+	PORT_START//("PAD1H")		/* IN 1 : Joypad 1 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P1 Button B") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P1 Button Y") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("P1 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START1 ) PORT_NAME("P1 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(1)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(1)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(1)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(1)
+
+	PORT_START//("PAD2L")		/* IN 2 : Joypad 2 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P2 Button A") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P2 Button X") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P2 Button L") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P2 Button R") PORT_PLAYER(2)
+	PORT_START//("PAD2H")		/* IN 3 : Joypad 2 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P2 Button B") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P2 Button Y") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("P2 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START2 ) PORT_NAME("P2 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(2)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(2)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(2)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(2)
+
+	PORT_START//("PAD3L")		/* IN 4 : Joypad 3 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P3 Button A") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P3 Button X") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P3 Button L") PORT_PLAYER(3)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P3 Button R") PORT_PLAYER(3)
+	PORT_START//("PAD3H")		/* IN 5 : Joypad 3 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P3 Button B") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P3 Button Y") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE3 ) PORT_NAME("P3 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START3 ) PORT_NAME("P3 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(3)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(3)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(3)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(3)
+
+	PORT_START//("PAD4L")		/* IN 6 : Joypad 4 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P4 Button A") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P4 Button X") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P4 Button L") PORT_PLAYER(4)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P4 Button R") PORT_PLAYER(4)
+	PORT_START//("PAD4H")		/* IN 7 : Joypad 4 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P4 Button B") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P4 Button Y") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE4 ) PORT_NAME("P4 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START4 ) PORT_NAME("P4 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(4)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(4)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(4)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(4)
+
+	PORT_START//("INTERNAL")		/* IN 8 : Internal switches */
+	PORT_DIPNAME( 0x1, 0x1, "Enforce 32 sprites/line" )
+	PORT_DIPSETTING(   0x0, DEF_STR( No )  )
+	PORT_DIPSETTING(   0x1, DEF_STR( Yes ) )
+
+#ifdef MAME_DEBUG
+	PORT_START//("DEBUG1")	/* IN 9 : debug switches */
+	PORT_DIPNAME( 0x3, 0x0, "Browse tiles" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x1, "2bpl"  )
+	PORT_DIPSETTING(   0x2, "4bpl"  )
+	PORT_DIPSETTING(   0x3, "8bpl"  )
+	PORT_DIPNAME( 0xc, 0x0, "Browse maps" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x4, "2bpl"  )
+	PORT_DIPSETTING(   0x8, "4bpl"  )
+	PORT_DIPSETTING(   0xc, "8bpl"  )
+
+	PORT_START//("DEBUG2")	/* IN 10 : debug switches */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle BG 1") PORT_PLAYER(2)
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle BG 2") PORT_PLAYER(2)
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle BG 3") PORT_PLAYER(2)
+	PORT_BIT( 0x8, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle BG 4") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Objects") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle Main/Sub") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle Back col") PORT_PLAYER(3)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle Windows") PORT_PLAYER(3)
+
+	PORT_START//("DEBUG3")	/* IN 11 : debug input */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Pal prev")
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Pal next")
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Transparency") PORT_PLAYER(4)
+#else
+	PORT_START//("DEBUG1")	/* IN 9 : debug switches */
+	PORT_START//("DEBUG2")	/* IN 10 : debug switches */
+	PORT_START//("DEBUG3")	/* IN 11 : debug input */
+#endif
+
+	PORT_START//("DSW1")	/* IN 12 : dip-switches */
+	PORT_DIPUNKNOWN_DIPLOC( 0x01, 0x01, "SW1:1" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x02, 0x02, "SW1:2" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x04, 0x04, "SW1:3" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x08, 0x08, "SW1:4" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x10, 0x10, "SW1:5" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x20, 0x20, "SW1:6" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x40, 0x40, "SW1:7" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x80, 0x80, "SW1:8" )
+	
+	PORT_START//("DSW2")	/* IN 13 : dip-switches */
+	PORT_DIPUNKNOWN_DIPLOC( 0x01, 0x01, "SW2:1" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x02, 0x02, "SW2:2" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x04, 0x04, "SW2:3" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x08, 0x08, "SW2:4" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x10, 0x10, "SW2:5" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x20, 0x20, "SW2:6" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x40, 0x40, "SW2:7" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x80, 0x80, "SW2:8" )
+
+
+	PORT_START//("COIN")	/* IN 14 : coins */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_COIN1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_COIN2 )
+
+INPUT_PORTS_END
+
+INPUT_PORTS_START( denseib )
+	PORT_START//("PAD1L")		/* IN 0 : Joypad 1 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P1 Button A") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P1 Button X") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P1 Button L") PORT_PLAYER(1)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P1 Button R") PORT_PLAYER(1)
+	PORT_START//("PAD1H")		/* IN 1 : Joypad 1 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P1 Button B") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P1 Button Y") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("P1 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START1 ) PORT_NAME("P1 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(1)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(1)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(1)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(1)
+
+	PORT_START//("PAD2L")		/* IN 2 : Joypad 2 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P2 Button A") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P2 Button X") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P2 Button L") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P2 Button R") PORT_PLAYER(2)
+	PORT_START//("PAD2H")		/* IN 3 : Joypad 2 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P2 Button B") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P2 Button Y") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("P2 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START2 ) PORT_NAME("P2 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(2)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(2)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(2)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(2)
+
+	PORT_START//("PAD3L")		/* IN 4 : Joypad 3 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P3 Button A") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P3 Button X") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P3 Button L") PORT_PLAYER(3)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P3 Button R") PORT_PLAYER(3)
+	PORT_START//("PAD3H")		/* IN 5 : Joypad 3 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P3 Button B") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P3 Button Y") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE3 ) PORT_NAME("P3 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START3 ) PORT_NAME("P3 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(3)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(3)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(3)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(3)
+
+	PORT_START//("PAD4L")		/* IN 6 : Joypad 4 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P4 Button A") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P4 Button X") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P4 Button L") PORT_PLAYER(4)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P4 Button R") PORT_PLAYER(4)
+	PORT_START//("PAD4H")		/* IN 7 : Joypad 4 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P4 Button B") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P4 Button Y") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE4 ) PORT_NAME("P4 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START4 ) PORT_NAME("P4 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(4)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(4)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(4)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(4)
+
+	PORT_START//("INTERNAL")		/* IN 8 : Internal switches */
+	PORT_DIPNAME( 0x1, 0x1, "Enforce 32 sprites/line" )
+	PORT_DIPSETTING(   0x0, DEF_STR( No )  )
+	PORT_DIPSETTING(   0x1, DEF_STR( Yes ) )
+
+#ifdef MAME_DEBUG
+	PORT_START//("DEBUG1")	/* IN 9 : debug switches */
+	PORT_DIPNAME( 0x3, 0x0, "Browse tiles" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x1, "2bpl"  )
+	PORT_DIPSETTING(   0x2, "4bpl"  )
+	PORT_DIPSETTING(   0x3, "8bpl"  )
+	PORT_DIPNAME( 0xc, 0x0, "Browse maps" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x4, "2bpl"  )
+	PORT_DIPSETTING(   0x8, "4bpl"  )
+	PORT_DIPSETTING(   0xc, "8bpl"  )
+
+	PORT_START//("DEBUG2")	/* IN 10 : debug switches */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle BG 1") PORT_PLAYER(2)
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle BG 2") PORT_PLAYER(2)
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle BG 3") PORT_PLAYER(2)
+	PORT_BIT( 0x8, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle BG 4") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Objects") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle Main/Sub") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle Back col") PORT_PLAYER(3)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle Windows") PORT_PLAYER(3)
+
+	PORT_START//("DEBUG3")	/* IN 11 : debug input */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Pal prev")
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Pal next")
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Transparency") PORT_PLAYER(4)
+#else
+	PORT_START//("DEBUG1")	/* IN 9 : debug switches */
+	PORT_START//("DEBUG2")	/* IN 10 : debug switches */
+	PORT_START//("DEBUG3")	/* IN 11 : debug input */
+#endif
+
+	PORT_START//("DSW1")	/* IN 12 : dip-switches */
+	PORT_DIPUNKNOWN_DIPLOC( 0x01, 0x01, "SW1:1" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x02, 0x02, "SW1:2" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x04, 0x04, "SW1:3" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x08, 0x08, "SW1:4" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x10, 0x10, "SW1:5" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x20, 0x20, "SW1:6" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x40, 0x40, "SW1:7" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x80, 0x80, "SW1:8" )
+
+	PORT_START//("COIN")	/* IN 14 : coins */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_COIN1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_COIN2 )
+
+INPUT_PORTS_END
+
+INPUT_PORTS_START( sblast2b )
+	PORT_START//("PAD1L")		/* IN 0 : Joypad 1 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P1 Button A") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P1 Button X") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P1 Button L") PORT_PLAYER(1)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P1 Button R") PORT_PLAYER(1)
+	PORT_START//("PAD1H")		/* IN 1 : Joypad 1 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P1 Button B") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P1 Button Y") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("P1 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START1 ) PORT_NAME("P1 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(1)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(1)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(1)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(1)
+
+	PORT_START//("PAD2L")		/* IN 2 : Joypad 2 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P2 Button A") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P2 Button X") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P2 Button L") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P2 Button R") PORT_PLAYER(2)
+	PORT_START//("PAD2H")		/* IN 3 : Joypad 2 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P2 Button B") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P2 Button Y") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("P2 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START2 ) PORT_NAME("P2 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(2)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(2)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(2)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(2)
+
+	PORT_START//("PAD3L")		/* IN 4 : Joypad 3 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P3 Button A") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P3 Button X") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P3 Button L") PORT_PLAYER(3)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P3 Button R") PORT_PLAYER(3)
+	PORT_START//("PAD3H")		/* IN 5 : Joypad 3 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P3 Button B") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P3 Button Y") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE3 ) PORT_NAME("P3 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START3 ) PORT_NAME("P3 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(3)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(3)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(3)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(3)
+
+	PORT_START//("PAD4L")		/* IN 6 : Joypad 4 - L */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P4 Button A") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P4 Button X") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P4 Button L") PORT_PLAYER(4)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P4 Button R") PORT_PLAYER(4)
+	PORT_START//("PAD4H")		/* IN 7 : Joypad 4 - H */
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P4 Button B") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P4 Button Y") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE4 ) PORT_NAME("P4 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START4 ) PORT_NAME("P4 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(4)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(4)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(4)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(4)
+
+	PORT_START//("INTERNAL")		/* IN 8 : Internal switches */
+	PORT_DIPNAME( 0x1, 0x1, "Enforce 32 sprites/line" )
+	PORT_DIPSETTING(   0x0, DEF_STR( No )  )
+	PORT_DIPSETTING(   0x1, DEF_STR( Yes ) )
+
+#ifdef MAME_DEBUG
+	PORT_START//("DEBUG1")	/* IN 9 : debug switches */
+	PORT_DIPNAME( 0x3, 0x0, "Browse tiles" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x1, "2bpl"  )
+	PORT_DIPSETTING(   0x2, "4bpl"  )
+	PORT_DIPSETTING(   0x3, "8bpl"  )
+	PORT_DIPNAME( 0xc, 0x0, "Browse maps" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x4, "2bpl"  )
+	PORT_DIPSETTING(   0x8, "4bpl"  )
+	PORT_DIPSETTING(   0xc, "8bpl"  )
+
+	PORT_START//("DEBUG2")	/* IN 10 : debug switches */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle BG 1") PORT_PLAYER(2)
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle BG 2") PORT_PLAYER(2)
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle BG 3") PORT_PLAYER(2)
+	PORT_BIT( 0x8, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle BG 4") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Objects") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle Main/Sub") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle Back col") PORT_PLAYER(3)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle Windows") PORT_PLAYER(3)
+
+	PORT_START//("DEBUG3")	/* IN 11 : debug input */
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Pal prev")
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Pal next")
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Transparency") PORT_PLAYER(4)
+#else
+	PORT_START//("DEBUG1")	/* IN 9 : debug switches */
+	PORT_START//("DEBUG2")	/* IN 10 : debug switches */
+	PORT_START//("DEBUG3")	/* IN 11 : debug input */
+#endif
+
+	PORT_START//("DSW")	/* IN 12 : dip-switches */
+	PORT_DIPUNKNOWN_DIPLOC( 0x01, 0x01, "SW1:1" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x02, 0x02, "SW1:2" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x04, 0x04, "SW1:3" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x08, 0x08, "SW1:4" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x10, 0x10, "SW1:5" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x20, 0x20, "SW1:6" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x40, 0x40, "SW1:7" )
+	PORT_DIPUNKNOWN_DIPLOC( 0x80, 0x80, "SW1:8" )
+
+	PORT_START//("COIN")	/* IN 13 : coins */
+	PORT_BIT( 0x01, IP_ACTIVE_LOW, IPT_COIN1 )
+	PORT_BIT( 0x02, IP_ACTIVE_LOW, IPT_COIN2 )
+
+INPUT_PORTS_END
+
+
+static struct CustomSound_interface snes_sound_interface =
+{ snes_sh_start };
+
+static const gfx_decode gfxdecodeinfo[] =
+{
+	{ -1 } /* end of array */
+};
+
+static PALETTE_INIT( snes )
+{
+	int i, r, g, b;
+ 
+ 	for( i = 0; i < 32768; i++ )
+	{
+		r = (i & 0x1F) << 3;
+		g = ((i >> 5) & 0x1F) << 3;
+		b = ((i >> 10) & 0x1F) << 3;
+		palette_set_color( i, r, g, b );
+	}
+
+	/* The colortable can be black */
+	for( i = 0; i < 256; i++ )
+		colortable[i] = 0;
+}
+
+INPUT_PORTS_START( piratdwb )
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P1 Button A") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P1 Button X") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P1 Button L") PORT_PLAYER(1)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P1 Button R") PORT_PLAYER(1)
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P1 Button B") PORT_PLAYER(1)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P1 Button Y") PORT_PLAYER(1)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE1 ) PORT_NAME("P1 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START1 ) PORT_NAME("P1 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(1)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(1)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(1)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(1)
+
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P2 Button A") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P2 Button X") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P2 Button L") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P2 Button R") PORT_PLAYER(2)
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P2 Button B") PORT_PLAYER(2)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P2 Button Y") PORT_PLAYER(2)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE2 ) PORT_NAME("P2 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START2 ) PORT_NAME("P2 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(2)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(2)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(2)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(2)
+
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P3 Button A") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P3 Button X") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P3 Button L") PORT_PLAYER(3)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P3 Button R") PORT_PLAYER(3)
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P3 Button B") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P3 Button Y") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE3 ) PORT_NAME("P3 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START3 ) PORT_NAME("P3 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(3)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(3)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(3)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(3)
+
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON3 ) PORT_NAME("P4 Button A") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON4 ) PORT_NAME("P4 Button X") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON5 ) PORT_NAME("P4 Button L") PORT_PLAYER(4)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON6 ) PORT_NAME("P4 Button R") PORT_PLAYER(4)
+	PORT_START
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON1 ) PORT_NAME("P4 Button B") PORT_PLAYER(4)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON2 ) PORT_NAME("P4 Button Y") PORT_PLAYER(4)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_SERVICE4 ) PORT_NAME("P4 Select")
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_START4 ) PORT_NAME("P4 Start")
+	PORT_BIT( 0x08, IP_ACTIVE_HIGH, IPT_JOYSTICK_UP ) PORT_PLAYER(4)
+	PORT_BIT( 0x04, IP_ACTIVE_HIGH, IPT_JOYSTICK_DOWN ) PORT_PLAYER(4)
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_JOYSTICK_LEFT ) PORT_PLAYER(4)
+	PORT_BIT( 0x01, IP_ACTIVE_HIGH, IPT_JOYSTICK_RIGHT ) PORT_PLAYER(4)
+
+	PORT_START
+	PORT_DIPNAME( 0x1, 0x1, "Enforce 32 sprites/line" )
+	PORT_DIPSETTING(   0x0, DEF_STR( No )  )
+	PORT_DIPSETTING(   0x1, DEF_STR( Yes ) )
+
+#ifdef MAME_DEBUG
+	PORT_START
+	PORT_DIPNAME( 0x3, 0x0, "Browse tiles" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x1, "2bpl"  )
+	PORT_DIPSETTING(   0x2, "4bpl"  )
+	PORT_DIPSETTING(   0x3, "8bpl"  )
+	PORT_DIPNAME( 0xc, 0x0, "Browse maps" )
+	PORT_DIPSETTING(   0x0, DEF_STR( Off ) )
+	PORT_DIPSETTING(   0x4, "2bpl"  )
+	PORT_DIPSETTING(   0x8, "4bpl"  )
+	PORT_DIPSETTING(   0xc, "8bpl"  )
+
+	PORT_START
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle BG 1") PORT_PLAYER(2)
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle BG 2") PORT_PLAYER(2)
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle BG 3") PORT_PLAYER(2)
+	PORT_BIT( 0x8, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle BG 4") PORT_PLAYER(2)
+	PORT_BIT( 0x10, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Objects") PORT_PLAYER(3)
+	PORT_BIT( 0x20, IP_ACTIVE_HIGH, IPT_BUTTON8 ) PORT_NAME("Toggle Main/Sub") PORT_PLAYER(3)
+	PORT_BIT( 0x40, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Toggle Back col") PORT_PLAYER(3)
+	PORT_BIT( 0x80, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Toggle Windows") PORT_PLAYER(3)
+
+	PORT_START
+	PORT_BIT( 0x1, IP_ACTIVE_HIGH, IPT_BUTTON9 ) PORT_NAME("Pal prev")
+	PORT_BIT( 0x2, IP_ACTIVE_HIGH, IPT_BUTTON10 ) PORT_NAME("Pal next")
+	PORT_BIT( 0x4, IP_ACTIVE_HIGH, IPT_BUTTON7 ) PORT_NAME("Toggle Transparency") PORT_PLAYER(4)
+#else
+	PORT_START
+	PORT_START
+	PORT_START
+#endif
+
+	PORT_START_TAG("PIRATE_DSW")
+	PORT_BIT( 0x07, IP_ACTIVE_LOW, IPT_UNUSED )
+	PORT_DIPNAME( 0x38, 0x30, DEF_STR( Difficulty ) )
+	PORT_DIPSETTING( 0x38, "1 (Easiest)" )
+	PORT_DIPSETTING( 0x30, "2" )
+	PORT_DIPSETTING( 0x28, "3" )
+	PORT_DIPSETTING( 0x20, "4" )
+	PORT_DIPSETTING( 0x18, "5" )
+	PORT_DIPSETTING( 0x10, "6" )
+	PORT_DIPSETTING( 0x08, "7" )
+	PORT_DIPSETTING( 0x00, "8 (Hardest)" )
+	PORT_DIPNAME( 0xc0, 0x00, DEF_STR( Lives ) )
+	PORT_DIPSETTING( 0xc0, "1" )
+	PORT_DIPSETTING( 0x80, "2" )
+	PORT_DIPSETTING( 0x40, "3" )
+	PORT_DIPSETTING( 0x00, "4" )
+
+	PORT_START_TAG("PIRATE_COIN")
+	PORT_BIT( 0x02, IP_ACTIVE_HIGH, IPT_COIN1 )
+INPUT_PORTS_END
+
+static MACHINE_DRIVER_START( kinstb )
+	/* basic machine hardware */
+	MDRV_CPU_ADD_TAG("main", G65816, 3580000)	/* 2.68Mhz, also 3.58Mhz */
+	MDRV_CPU_PROGRAM_MAP(snesb_map, 0)
+
+	/* audio CPU */
+	MDRV_CPU_ADD_TAG("sound", SPC700, 2048000/2)	/* 2.048 Mhz, but internal divider */
+	MDRV_CPU_PROGRAM_MAP(spc_mem, 0)
+	MDRV_CPU_VBLANK_INT(NULL, 0)
+
+	MDRV_FRAMES_PER_SECOND(60)
+	MDRV_INTERLEAVE(400)
+
+	MDRV_MACHINE_START( snes )
+	MDRV_MACHINE_RESET( snes )
+
+	/* video hardware */
+	MDRV_VIDEO_START( generic_bitmapped )
+	MDRV_VIDEO_UPDATE( snes )
+
+	MDRV_VIDEO_ATTRIBUTES(VIDEO_TYPE_RASTER)
+	MDRV_SCREEN_SIZE(SNES_SCR_WIDTH * 2, SNES_SCR_HEIGHT * 2)
+	MDRV_VISIBLE_AREA(0, SNES_SCR_WIDTH-1, 0, SNES_SCR_HEIGHT-1 )
+	MDRV_GFXDECODE(gfxdecodeinfo)
+	MDRV_PALETTE_LENGTH(32768)
+	MDRV_COLORTABLE_LENGTH(257)
+	MDRV_PALETTE_INIT( snes )
+
+	/* sound hardware */
+	MDRV_SPEAKER_STANDARD_STEREO("left", "right")
+
+	MDRV_SOUND_ADD(CUSTOM, 0)
+	MDRV_SOUND_CONFIG(snes_sound_interface)
+	MDRV_SOUND_ROUTE(0, "left", 1.00)
+	MDRV_SOUND_ROUTE(1, "right", 1.00)
+MACHINE_DRIVER_END
+
+static MACHINE_DRIVER_START( ffight2b )
+	MDRV_IMPORT_FROM(kinstb)
+	MDRV_VISIBLE_AREA(0, SNES_SCR_WIDTH-1, 16, SNES_SCR_HEIGHT-1-24)
+MACHINE_DRIVER_END
+
+static MACHINE_DRIVER_START( ffight3b )
+	MDRV_IMPORT_FROM(kinstb)
+	MDRV_VISIBLE_AREA(0, SNES_SCR_WIDTH-1, 20, 208)
+MACHINE_DRIVER_END
+
+static MACHINE_DRIVER_START( piratdwb )
+	MDRV_IMPORT_FROM(kinstb)
+	MDRV_MACHINE_RESET(piratdwb)
+	MDRV_CPU_ADD(M68000, 16000000/2)
+	MDRV_CPU_PROGRAM_MAP(piratdwb_68k_map, 0)
+	MDRV_CPU_PERIODIC_INT(piratdwb_coin_poll, TIME_IN_HZ(120))
+MACHINE_DRIVER_END
+
+static DRIVER_INIT( piratdwb )
+{
+	init_snes();
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0xc00000, 0xc00000, 0, 0, piratdwb_latch_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0xc00001, 0xc00001, 0, 0, piratdwb_latch_ack_w);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0xc00002, 0xc00002, 0, 0, piratdwb_status_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0xc00004, 0xc00004, 0, 0, piratdwb_dsw_r);
+}
+
+static DRIVER_INIT(kinstb)
+{
+	INT32 i;
+	UINT8 *rom = memory_region(REGION_USER3);
+
+	for(i=0;i<0x400000;i++)
+	{
+		rom[i]=BITSWAP8(rom[i],5,0,6,1,7,4,3,2);
+	}
+
+	shared_ram=auto_malloc(0x100);
+
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x7810ff, 0, 0, sharedram_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x7810ff, 0, 0, sharedram_w);
+
+	//DRIVER_INIT_CALL(snes_hirom);
+	init_snes_hirom();
+}
+
+static DRIVER_INIT( ffight2b )
+{
+	INT32 i;
+	UINT8 *rom = memory_region(REGION_USER3);
+
+	for(i=0;i<0x200000;i++)
+	{
+		rom[i]=rom[i]^0xff;
+
+		if (i<0x10000) /* 0x00000 - 0x0ffff */
+		{
+			rom[i]=BITSWAP8(rom[i],3,1,6,4,7,0,2,5);
+		}
+		else if (i<0x20000) /* 0x10000 - 0x1ffff */
+		{
+			rom[i]=BITSWAP8(rom[i],3,7,0,5,1,6,2,4);
+		}
+
+		else if (i<0x30000) /* 0x20000 - 0x2ffff */
+		{
+			rom[i]=BITSWAP8(rom[i],1,7,6,4,5,2,3,0);
+		}
+		else if (i<0x40000) /* 0x30000 - 0x3ffff */
+		{
+			rom[i]=BITSWAP8(rom[i],0,3,2,5,4,6,7,1);
+		}
+		else if (i<0x150000)
+		{
+			rom[i]=BITSWAP8(rom[i],6,4,0,5,1,3,2,7);
+		}
+	}
+
+	/*  boot vector */
+	rom[0x7ffd]=0x89;
+	rom[0x7ffc]=0x54;
+
+	ffight2b_coins=0;
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x7eadce, 0x7eadce, 0, 0, ffight2b_coin_r);
+
+	//DRIVER_INIT_CALL(snes);
+	init_snes();
+}
+
+static DRIVER_INIT( iron )
+{
+	INT32 i;
+	UINT8 *rom = memory_region(REGION_USER3);
+
+	for(i=0;i<0x140000;i++)
+	{
+		if(i<0x80000)
+		{
+			rom[i]=BITSWAP8(rom[i]^0xff,2,7,1,6,3,0,5,4);
+		}
+		else
+		{
+			rom[i]=BITSWAP8(rom[i],6,3,0,5,1,4,7,2);
+		}
+	}
+
+	/* extra inputs */
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, iron_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770073, 0x770073, 0, 0, iron_770073_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, iron_770079_r);
+
+	//DRIVER_INIT_CALL(snes);
+	init_snes();
+}
+
+static DRIVER_INIT( denseib )
+{
+
+	UINT8 *rom = memory_region(REGION_USER3);
+
+	INT32 i;	
+	for(i=0;i<0x200000;i++)
+	{
+		rom[i]=rom[i]^0xff;
+		switch(i>>16)
+		{
+			case 0x00: rom[i]=BITSWAP8(rom[i],1,7,0,6,3,4,5,2); break;
+			case 0x01: rom[i]=BITSWAP8(rom[i],3,4,7,2,0,6,5,1); break;
+			case 0x02: rom[i]=BITSWAP8(rom[i],5,4,2,1,7,0,6,3); break;
+			case 0x03: rom[i]=BITSWAP8(rom[i],0,1,3,7,2,6,5,4); break;
+
+			default:   rom[i]=BITSWAP8(rom[i],4,5,1,0,2,3,7,6); break;
+		}
+	}
+
+    /*  boot vector */
+    rom[0xfffc]=0x40;
+    rom[0xfffd]=0xf7;
+	
+	/* extra inputs */
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, denseib_770071_r);
+    memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, denseib_770079_r);
+	
+
+//	DRIVER_INIT_CALL(snes_hirom);
+	init_snes_hirom();
+}
+
+static DRIVER_INIT( denseib2 )
+{
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+	INT32 i;
+
+	static const UINT8 address_tab_high[0x40] = {
+		0x0b, 0x1d, 0x05, 0x15, 0x09, 0x19, 0x04, 0x13, 0x02, 0x1f, 0x07, 0x17, 0x0d, 0x11, 0x0a, 0x1a,
+		0x14, 0x0e, 0x18, 0x06, 0x1e, 0x01, 0x10, 0x0c, 0x1b, 0x0f, 0x16, 0x00, 0x12, 0x08, 0x1c, 0x03,
+		0x2b, 0x3d, 0x25, 0x35, 0x29, 0x39, 0x24, 0x33, 0x22, 0x3f, 0x27, 0x37, 0x2d, 0x31, 0x2a, 0x3a,
+		0x34, 0x2e, 0x38, 0x26, 0x3e, 0x21, 0x30, 0x2c, 0x3b, 0x2f, 0x36, 0x20, 0x32, 0x28, 0x3c, 0x23
+	};
+
+	static const UINT8 address_tab_low[0x40] = {
+		0x14, 0x1d, 0x11, 0x3c, 0x0a, 0x29, 0x2d, 0x2e, 0x30, 0x32, 0x16, 0x36, 0x05, 0x25, 0x26, 0x37,
+		0x20, 0x21, 0x27, 0x28, 0x33, 0x34, 0x23, 0x12, 0x1e, 0x1f, 0x3b, 0x24, 0x2c, 0x35, 0x38, 0x39,
+		0x3d, 0x0c, 0x2a, 0x0d, 0x22, 0x18, 0x19, 0x1a, 0x03, 0x08, 0x04, 0x3a, 0x0b, 0x0f, 0x15, 0x17,
+		0x1b, 0x13, 0x00, 0x1c, 0x2b, 0x01, 0x06, 0x2f, 0x07, 0x09, 0x02, 0x31, 0x10, 0x0e, 0x3f, 0x3e
+	};
+
+	static const UINT8 data_high[16] = {
+		0x03, 0x04, 0x85, 0x01, 0x81, 0x87, 0x07, 0x05, 0x86, 0x00, 0x02, 0x82, 0x84, 0x83, 0x06, 0x80
+	};
+
+	static const UINT8 data_low[16] = {
+		0x30, 0x40, 0x58, 0x10, 0x18, 0x78, 0x70, 0x50, 0x68, 0x00, 0x20, 0x28, 0x48, 0x38, 0x60, 0x08
+	};
+
+	for (i = 0; i < 0x200000; i++)
+	{
+		int j = (address_tab_high[i >> 15] << 15) + (i & 0x7fc0) + address_tab_low[i & 0x3f];
+
+		dst[i] = data_high[src[j] >> 4] | data_low[src[j] & 0xf];
+
+		if (i >= 0x00000 && i < 0x10000)
+			dst[i] = BITSWAP8(dst[i], 2, 1, 3, 0, 7, 4, 5, 6) ^ 0xff;
+
+		if (i >= 0x10000 && i < 0x20000)
+			dst[i] = BITSWAP8(dst[i], 1, 7, 4, 5, 6, 0, 3, 2);
+
+		if (i >= 0x20000 && i < 0x30000)
+			dst[i] = BITSWAP8(dst[i], 0, 2, 6, 7, 5, 3, 4, 1) ^ 0xff;
+
+		if (i >= 0x30000 && i < 0x40000)
+			dst[i] = BITSWAP8(dst[i], 6, 5, 0, 3, 1, 7, 2, 4) ^ 0xff;
+	}
+
+	/* boot vector */
+	dst[0xfffc] = 0x40;
+	dst[0xfffd] = 0xf7;
+
+	/* extra inputs */
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, denseib_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, denseib_770079_r);
+
+	init_snes_hirom();
+}
+
+static const UINT8 data_substitution0[] = {0x88,0x02,0x2a,0x08,0x28,0xaa,0x8a,0x0a,0xa2,0x00,0x80,0xa0,0x22,0xa8,0x82,0x20,};
+static const UINT8 data_substitution1[] = {0x44,0x01,0x51,0x40,0x50,0x55,0x45,0x41,0x15,0x00,0x04,0x14,0x11,0x54,0x05,0x10,};
+static const UINT8 address_substitution_low[] = 
+{
+	0x32,0x35,0x3a,0x28,0x2a,0x0c,0x36,0x38,0x29,0x39,0x04,0x2c,0x21,0x23,0x3d,0x2d,
+	0x3c,0x02,0x17,0x31,0x00,0x2e,0x0a,0x2f,0x25,0x26,0x27,0x30,0x33,0x01,0x18,0x19,
+	0x10,0x11,0x24,0x16,0x1b,0x0d,0x0e,0x12,0x13,0x05,0x22,0x34,0x1c,0x06,0x07,0x37,
+	0x08,0x3b,0x09,0x14,0x15,0x1d,0x0b,0x0f,0x1e,0x1f,0x2b,0x1a,0x03,0x20,0x3f,0x3e,
+}; 
+    
+static const UINT8  address_substitution_high[] =    
+{
+	0x1b,0x15,0x08,0x1f,0x06,0x02,0x13,0x0a,0x1d,0x04,0x0e,0x00,0x17,0x0c,0x11,0x19,
+	0x16,0x0d,0x1c,0x07,0x10,0x03,0x1a,0x0b,0x12,0x05,0x0f,0x18,0x1e,0x01,0x14,0x09,
+	0x2b,0x25,0x28,0x2f,0x26,0x22,0x23,0x2a,0x2d,0x24,0x2e,0x20,0x27,0x2c,0x21,0x29
+};
+	
+static DRIVER_INIT( sblast2b )
+{
+	int i, cipherText, plainText, newAddress;
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+	for (i=0; i<0x80000*3; i++)
+    {
+       	cipherText = src[i];
+       	plainText = data_substitution0[cipherText&0xf]|data_substitution1[cipherText>>4];
+   		newAddress = (address_substitution_high[i>>15]<<15)|(i&0x7fc0)|(address_substitution_low[i&0x3f]);
+  
+		if(newAddress<0x10000)
+	 	{
+	 		plainText = BITSWAP8(plainText, 6,3,5,4,2,0,7,1) ^ 0xff;
+	 	}
+		else
+	 	if(newAddress<0x20000)
+	 	{
+	 		plainText =	BITSWAP8(plainText, 4,0,7,6,3,1,2,5) ^ 0xff;
+	 	}
+	 	else		
+	 	if(newAddress<0x30000)
+	 	{
+	 		plainText =	BITSWAP8(plainText, 5,7,6,1,4,3,0,2);
+	 	}
+	 	else
+	 	if(newAddress<0x40000)
+	 	{
+	 		plainText = BITSWAP8(plainText, 3,1,2,0,5,6,4,7) ^ 0xff;
+	 	}
+        dst[newAddress] = plainText;
+    }
+ 
+ 	/*  boot vector */
+    dst[0xfffc]=0xc0;
+    dst[0xfffd]=0x7a;
+   
+   	/*  protection checks */
+ 	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x75bd37, 0x75bd37, 0, 0, sb2b_75bd37_r);
+  	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x6a6000, 0x6a6fff, 0, 0, sb2b_6a6xxx_r);
+  	
+  	/* extra inputs */
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, sb2b_770071_r);
+    memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, sb2b_770079_r);
+    
+    /* handler to read boot code */
+    memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x007000, 0x007fff, 0, 0, sb2b_7xxx_r);
+
+//	DRIVER_INIT_CALL(snes_hirom);
+	init_snes_hirom();
+}
+
+static DRIVER_INIT(endless)
+{
+	int i;
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+
+	static const UINT8 address_tab_high[0x40] = {
+		0x3b, 0x1d, 0x35, 0x15, 0x39, 0x19, 0x34, 0x13, 0x32, 0x1f, 0x37, 0x17, 0x3d, 0x11, 0x3a, 0x1a,
+		0x14, 0x3e, 0x18, 0x36, 0x1e, 0x31, 0x10, 0x3c, 0x1b, 0x3f, 0x16, 0x30, 0x12, 0x38, 0x1c, 0x33,
+		0x2b, 0x0d, 0x25, 0x05, 0x29, 0x09, 0x24, 0x03, 0x22, 0x0f, 0x27, 0x07, 0x2d, 0x01, 0x2a, 0x0a,
+		0x04, 0x2e, 0x08, 0x26, 0x0e, 0x21, 0x00, 0x2c, 0x0b, 0x2f, 0x06, 0x20, 0x02, 0x28, 0x0c, 0x23
+	};
+
+	static const UINT8 address_tab_low[0x40] = {
+		0x14, 0x1d, 0x11, 0x3c, 0x0a, 0x29, 0x2d, 0x2e, 0x30, 0x32, 0x16, 0x36, 0x05, 0x25, 0x26, 0x37,
+		0x20, 0x21, 0x27, 0x28, 0x33, 0x34, 0x23, 0x12, 0x1e, 0x1f, 0x3b, 0x24, 0x2c, 0x35, 0x38, 0x39,
+		0x3d, 0x0c, 0x2a, 0x0d, 0x22, 0x18, 0x19, 0x1a, 0x03, 0x08, 0x04, 0x3a, 0x0b, 0x0f, 0x15, 0x17,
+		0x1b, 0x13, 0x00, 0x1c, 0x2b, 0x01, 0x06, 0x2f, 0x07, 0x09, 0x02, 0x31, 0x10, 0x0e, 0x3f, 0x3e
+	};
+
+	static const UINT8 data_high[16] = {
+		0x88, 0x38, 0x10, 0x98, 0x90, 0x00, 0x08, 0x18, 0x20, 0xb8, 0xa8, 0xa0, 0x30, 0x80, 0x28, 0xb0
+	};
+
+	static const UINT8 data_low[16] = {
+		0x41, 0x46, 0x02, 0x43, 0x03, 0x00, 0x40, 0x42, 0x04, 0x47, 0x45, 0x05, 0x06, 0x01, 0x44, 0x07
+	};
+
+	for (i = 0; i < 0x200000; i++) {
+		int j = (address_tab_high[i >> 15] << 15) + (i & 0x7fc0) + address_tab_low[i & 0x3f];
+
+		dst[i] = data_high[src[j]>>4] | data_low[src[j]&0xf];
+
+		if (i >= 0x00000 && i < 0x10000) {
+			dst[i] = BITSWAP8(dst[i],2,3,4,1,7,0,6,5);
+		}
+
+		if (i >= 0x10000 && i < 0x20000) {
+			dst[i] = BITSWAP8(dst[i],1,5,6,0,2,4,7,3) ^ 0xff;
+		}
+
+		if (i >= 0x20000 && i < 0x30000) {
+			dst[i] = BITSWAP8(dst[i],3,0,1,6,4,5,2,7);
+		}
+
+		if (i >= 0x30000 && i < 0x40000) {
+			dst[i] = BITSWAP8(dst[i],0,4,2,3,5,6,7,1) ^ 0xff;
+		}
+	}
+
+	/*  boot vector */
+	dst[0x7ffc] = 0x00;
+	dst[0x7ffd] = 0x80;
+
+	/* protection checks */
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x580000, 0x580fff, 0, 0, endless_580xxx_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x624b7f, 0x624b7f, 0, 0, endless_624b7f_r);
+
+	/* work around missing content */
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x800b, 0x800c, 0, 0, endless_800b_r);
+
+    shared_ram=auto_malloc(0x22);
+	shared_ram2=auto_malloc(0x22);
+
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x781021, 0, 0, sharedram_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x781021, 0, 0, sharedram_w);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781200, 0x781221, 0, 0, sharedram2_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781200, 0x781221, 0, 0, sharedram2_w);
+
+	/* extra inputs */
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, iron_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770073, 0x770073, 0, 0, iron_770073_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, iron_770079_r);
+
+
+//	DRIVER_INIT_CALL(snes);
+	init_snes();
+}
+
+static DRIVER_INIT(legendsb)
+{
+	INT32 i;
+	UINT8 *rom = memory_region(REGION_USER3);
+
+	for(i = 0; i < 0x100000; i++)
+	{
+		UINT8 val = rom[i] ^ 0xff;
+
+		if (i < 0x10000)
+			rom[i] = BITSWAP8(val,6,5,4,2,1,0,3,7); // 0x00000 - 0x0ffff
+		else if (i < 0x20000)
+			rom[i] = BITSWAP8(val,6,1,3,5,2,0,7,4); // 0x10000 - 0x1ffff
+		else if (i < 0x30000)
+			rom[i] = BITSWAP8(val,2,6,3,0,4,5,7,1); // 0x20000 - 0x2ffff
+		else if (i < 0x40000)
+			rom[i] = BITSWAP8(val,5,4,2,7,0,3,6,1); // 0x30000 - 0x3ffff
+		else
+			rom[i] = BITSWAP8(val,3,6,0,5,1,4,7,2); // 0x40000 - 0xfffff
+	}
+
+	// boot vector
+	rom[0x7ffc] = 0x19;
+	rom[0x7ffd] = 0x80;
+
+	// extra inputs
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, iron_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770073, 0x770073, 0, 0, iron_770073_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, iron_770079_r);
+	
+//	DRIVER_INIT_CALL(snes);
+	init_snes();
+}
+
+static DRIVER_INIT(ffight3b)
+{
+	int i;
+	UINT8 *rom = memory_region(REGION_USER3);
+
+	for (i = 0; i < 0x300000; i++)
+	{
+		if (i < 0x80000)
+			rom[i] = BITSWAP8(rom[i], 7, 4, 2, 0, 3, 5, 6, 1) ^ 0xff;
+		else if (i < 0x280000)
+			rom[i] = BITSWAP8(rom[i], 0, 5, 1, 3, 2, 7, 6, 4);
+		else
+			rom[i] = BITSWAP8(rom[i], 4, 7, 0, 2, 5, 3, 1, 6) ^ 0xff;
+	}
+
+	// boot vector. TODO: this is the same as the console version, but needs to be verified
+	rom[0xfffc] = 0x00;
+	rom[0xfffd] = 0xfe;
+
+	// patch out protection
+	rom[0xfe33] = 0x5c;
+	rom[0xfe34] = 0x00;
+	rom[0xfe35] = 0x00;
+	rom[0xfe36] = 0xc0;
+	rom[0xfe80] = 0x60;
+	rom[0xfeab] = 0x60;
+
+	// extra inputs
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, iron_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770073, 0x770073, 0, 0, iron_770073_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, iron_770079_r);
+	
+	init_snes_hirom();
+}
+
+static DRIVER_INIT(venom)
+{
+	int i, j;
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+
+    static UINT8 address_tab_high[0x60] = {
+        0x00, 0x11, 0x02, 0x13, 0x04, 0x15, 0x06, 0x17, 0x08, 0x19, 0x0a, 0x1b, 0x0c, 0x1d, 0x0e, 0x1f,
+        0x20, 0x31, 0x22, 0x33, 0x24, 0x35, 0x26, 0x37, 0x28, 0x39, 0x2a, 0x3b, 0x2c, 0x3d, 0x2e, 0x3f,
+        0x10, 0x01, 0x12, 0x03, 0x14, 0x05, 0x16, 0x07, 0x18, 0x09, 0x1a, 0x0b, 0x1c, 0x0d, 0x1e, 0x0f,
+        0x30, 0x21, 0x32, 0x23, 0x34, 0x25, 0x36, 0x27, 0x38, 0x29, 0x3a, 0x2b, 0x3c, 0x2d, 0x3e, 0x2f,
+        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f,
+        0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f
+    };
+
+    static UINT8 address_tab_low[0x40] = {
+        0x14, 0x1d, 0x11, 0x3c, 0x0a, 0x29, 0x2d, 0x2e, 0x30, 0x32, 0x16, 0x36, 0x05, 0x25, 0x26, 0x37,
+        0x20, 0x21, 0x27, 0x28, 0x33, 0x34, 0x23, 0x12, 0x1e, 0x1f, 0x3b, 0x24, 0x2c, 0x35, 0x38, 0x39,
+        0x3d, 0x0c, 0x2a, 0x0d, 0x22, 0x18, 0x19, 0x1a, 0x03, 0x08, 0x04, 0x3a, 0x0b, 0x0f, 0x15, 0x17,
+        0x1b, 0x13, 0x00, 0x1c, 0x2b, 0x01, 0x06, 0x2f, 0x07, 0x09, 0x02, 0x31, 0x10, 0x0e, 0x3f, 0x3e
+    };
+
+    static UINT8 data_table[0x100] = {
+        0x6a, 0xf2, 0xe0, 0xea, 0xe8, 0x60, 0x62, 0xe2, 0x70, 0xfa, 0x7a, 0x78, 0xf0, 0x68, 0x72, 0xf8,
+        0x4f, 0xd7, 0xc5, 0xcf, 0xcd, 0x45, 0x47, 0xc7, 0x55, 0xdf, 0x5f, 0x5d, 0xd5, 0x4d, 0x57, 0xdd,
+        0x0e, 0x96, 0x84, 0x8e, 0x8c, 0x04, 0x06, 0x86, 0x14, 0x9e, 0x1e, 0x1c, 0x94, 0x0c, 0x16, 0x9c,
+        0x6e, 0xf6, 0xe4, 0xee, 0xec, 0x64, 0x66, 0xe6, 0x74, 0xfe, 0x7e, 0x7c, 0xf4, 0x6c, 0x76, 0xfc,
+        0x2e, 0xb6, 0xa4, 0xae, 0xac, 0x24, 0x26, 0xa6, 0x34, 0xbe, 0x3e, 0x3c, 0xb4, 0x2c, 0x36, 0xbc,
+        0x0a, 0x92, 0x80, 0x8a, 0x88, 0x00, 0x02, 0x82, 0x10, 0x9a, 0x1a, 0x18, 0x90, 0x08, 0x12, 0x98,
+        0x4a, 0xd2, 0xc0, 0xca, 0xc8, 0x40, 0x42, 0xc2, 0x50, 0xda, 0x5a, 0x58, 0xd0, 0x48, 0x52, 0xd8,
+        0x4e, 0xd6, 0xc4, 0xce, 0xcc, 0x44, 0x46, 0xc6, 0x54, 0xde, 0x5e, 0x5c, 0xd4, 0x4c, 0x56, 0xdc,
+        0x0b, 0x93, 0x81, 0x8b, 0x89, 0x01, 0x03, 0x83, 0x11, 0x9b, 0x1b, 0x19, 0x91, 0x09, 0x13, 0x99,
+        0x6f, 0xf7, 0xe5, 0xef, 0xed, 0x65, 0x67, 0xe7, 0x75, 0xff, 0x7f, 0x7d, 0xf5, 0x6d, 0x77, 0xfd,
+        0x6b, 0xf3, 0xe1, 0xeb, 0xe9, 0x61, 0x63, 0xe3, 0x71, 0xfb, 0x7b, 0x79, 0xf1, 0x69, 0x73, 0xf9,
+        0x2b, 0xb3, 0xa1, 0xab, 0xa9, 0x21, 0x23, 0xa3, 0x31, 0xbb, 0x3b, 0x39, 0xb1, 0x29, 0x33, 0xb9,
+        0x0f, 0x97, 0x85, 0x8f, 0x8d, 0x05, 0x07, 0x87, 0x15, 0x9f, 0x1f, 0x1d, 0x95, 0x0d, 0x17, 0x9d,
+        0x2a, 0xb2, 0xa0, 0xaa, 0xa8, 0x20, 0x22, 0xa2, 0x30, 0xba, 0x3a, 0x38, 0xb0, 0x28, 0x32, 0xb8,
+        0x4b, 0xd3, 0xc1, 0xcb, 0xc9, 0x41, 0x43, 0xc3, 0x51, 0xdb, 0x5b, 0x59, 0xd1, 0x49, 0x53, 0xd9,
+        0x2f, 0xb7, 0xa5, 0xaf, 0xad, 0x25, 0x27, 0xa7, 0x35, 0xbf, 0x3f, 0x3d, 0xb5, 0x2d, 0x37, 0xbd
+    };
+
+    for (i = 0; i < 0x300000; i++)
+    {
+        j = (address_tab_high[i >> 15] << 15) + (i & 0x7fc0) + address_tab_low[i & 0x3f];
+
+        dst[i] = data_table[src[j]];
+       
+        if (i >= 0x00000 && i < 0x10000) {
+            dst[i] = BITSWAP8(dst[i], 6, 7, 0, 3, 1, 4, 2, 5) ^ 0xff;
+        }
+
+        if (i >= 0x10000 && i < 0x20000) {
+            dst[i] = BITSWAP8(dst[i], 0, 1, 4, 5, 3, 7, 6, 2);
+        }
+
+        if (i >= 0x20000 && i < 0x30000) {
+            dst[i] = BITSWAP8(dst[i], 1, 3, 2, 6, 5, 4, 0, 7) ^ 0xff;
+        }
+
+        if (i >= 0x30000 && i < 0x40000) {
+            dst[i] = BITSWAP8(dst[i], 4, 0, 7, 6, 2, 1, 5, 3);
+        }
+    }
+
+	// boot vector
+	dst[0x7ffc] = 0x98;
+	dst[0x7ffd] = 0xff;
+	
+	shared_ram=auto_malloc(0x22);
+	shared_ram2=auto_malloc(0x22);
+
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x781021, 0, 0, sharedram_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x781021, 0, 0, sharedram_w);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781200, 0x781221, 0, 0, sharedram2_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781200, 0x781221, 0, 0, sharedram2_w);
+
+	// extra inputs
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, iron_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770073, 0x770073, 0, 0, iron_770073_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, iron_770079_r);
+	
+    init_snes();
+}
+
+static DRIVER_INIT (rushbets)
+{
+	int i, j;
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+
+	static const UINT8 address_tab_high[32] = {
+		0x0b, 0x1d, 0x05, 0x15, 0x09, 0x19, 0x04, 0x13, 0x02, 0x1f, 0x07, 0x17, 0x0d, 0x11, 0x0a, 0x1a,
+		0x14, 0x0e, 0x18, 0x06, 0x1e, 0x01, 0x10, 0x0c, 0x1b, 0x0f, 0x16, 0x00, 0x12, 0x08, 0x1c, 0x03
+	};
+
+	static const UINT8 address_tab_low[64] = {
+		0x14, 0x1d, 0x11, 0x3c, 0x0a, 0x29, 0x2d, 0x2e, 0x30, 0x32, 0x16, 0x36, 0x05, 0x25, 0x26, 0x37,
+		0x20, 0x21, 0x27, 0x28, 0x33, 0x34, 0x23, 0x12, 0x1e, 0x1f, 0x3b, 0x24, 0x2c, 0x35, 0x38, 0x39,
+		0x3d, 0x0c, 0x2a, 0x0d, 0x22, 0x18, 0x19, 0x1a, 0x03, 0x08, 0x04, 0x3a, 0x0b, 0x0f, 0x15, 0x17,
+		0x1b, 0x13, 0x00, 0x1c, 0x2b, 0x01, 0x06, 0x2f, 0x07, 0x09, 0x02, 0x31, 0x10, 0x0e, 0x3f, 0x3e
+	};
+
+	static const UINT8 data_table[256] = {
+		0xac, 0x85, 0xe5, 0xa4, 0xe4, 0xed, 0xad, 0xa5, 0xcd, 0x84, 0x8c, 0xcc, 0xc5, 0xec, 0x8d, 0xc4,
+		0x38, 0x11, 0x71, 0x30, 0x70, 0x79, 0x39, 0x31, 0x59, 0x10, 0x18, 0x58, 0x51, 0x78, 0x19, 0x50,
+		0xba, 0x93, 0xf3, 0xb2, 0xf2, 0xfb, 0xbb, 0xb3, 0xdb, 0x92, 0x9a, 0xda, 0xd3, 0xfa, 0x9b, 0xd2,
+		0xa8, 0x81, 0xe1, 0xa0, 0xe0, 0xe9, 0xa9, 0xa1, 0xc9, 0x80, 0x88, 0xc8, 0xc1, 0xe8, 0x89, 0xc0,
+		0xaa, 0x83, 0xe3, 0xa2, 0xe2, 0xeb, 0xab, 0xa3, 0xcb, 0x82, 0x8a, 0xca, 0xc3, 0xea, 0x8b, 0xc2,
+		0xbe, 0x97, 0xf7, 0xb6, 0xf6, 0xff, 0xbf, 0xb7, 0xdf, 0x96, 0x9e, 0xde, 0xd7, 0xfe, 0x9f, 0xd6,
+		0xbc, 0x95, 0xf5, 0xb4, 0xf4, 0xfd, 0xbd, 0xb5, 0xdd, 0x94, 0x9c, 0xdc, 0xd5, 0xfc, 0x9d, 0xd4,
+		0xb8, 0x91, 0xf1, 0xb0, 0xf0, 0xf9, 0xb9, 0xb1, 0xd9, 0x90, 0x98, 0xd8, 0xd1, 0xf8, 0x99, 0xd0,
+		0x3e, 0x17, 0x77, 0x36, 0x76, 0x7f, 0x3f, 0x37, 0x5f, 0x16, 0x1e, 0x5e, 0x57, 0x7e, 0x1f, 0x56,
+		0x28, 0x01, 0x61, 0x20, 0x60, 0x69, 0x29, 0x21, 0x49, 0x00, 0x08, 0x48, 0x41, 0x68, 0x09, 0x40,
+		0x2c, 0x05, 0x65, 0x24, 0x64, 0x6d, 0x2d, 0x25, 0x4d, 0x04, 0x0c, 0x4c, 0x45, 0x6c, 0x0d, 0x44,
+		0x2e, 0x07, 0x67, 0x26, 0x66, 0x6f, 0x2f, 0x27, 0x4f, 0x06, 0x0e, 0x4e, 0x47, 0x6e, 0x0f, 0x46,
+		0x3a, 0x13, 0x73, 0x32, 0x72, 0x7b, 0x3b, 0x33, 0x5b, 0x12, 0x1a, 0x5a, 0x53, 0x7a, 0x1b, 0x52,
+		0xae, 0x87, 0xe7, 0xa6, 0xe6, 0xef, 0xaf, 0xa7, 0xcf, 0x86, 0x8e, 0xce, 0xc7, 0xee, 0x8f, 0xc6,
+		0x3c, 0x15, 0x75, 0x34, 0x74, 0x7d, 0x3d, 0x35, 0x5d, 0x14, 0x1c, 0x5c, 0x55, 0x7c, 0x1d, 0x54,
+		0x2a, 0x03, 0x63, 0x22, 0x62, 0x6b, 0x2b, 0x23, 0x4b, 0x02, 0x0a, 0x4a, 0x43, 0x6a, 0x0b, 0x42
+	};
+
+	for (i = 0; i < 0x200000; i++) {
+		j = (address_tab_high[(i >> 15) & 0x1f] << 15) + (i & 0x107fc0) + address_tab_low[i & 0x3f];
+
+		dst[i] = data_table[src[j]];
+
+		if (i >= 0x00000 && i < 0x10000) {
+			dst[i] = BITSWAP8(dst[i], 0, 7, 6, 3, 5, 4, 1, 2) ^ 0xff;
+		}
+
+		if (i >= 0x10000 && i < 0x20000) {
+			dst[i] = BITSWAP8(dst[i], 2, 1, 3, 7, 6, 5, 4, 0) ^ 0xff;
+		}
+
+		if (i >= 0x20000 && i < 0x30000) {
+			dst[i] = BITSWAP8(dst[i], 4, 6, 0, 2, 7, 3, 5, 1);
+		}
+
+		if (i >= 0x30000 && i < 0x40000) {
+			dst[i] = BITSWAP8(dst[i], 5, 4, 7, 1, 0, 6, 2, 3) ^ 0xff;
+		}
+	}
+
+	/* protection checks */
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x75a000, 0x75afff, 0, 0, rushbets_75axxx_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x5b8e3c, 0x5b8e3c, 0, 0, rushbets_5b8e3c_r);
+
+	shared_ram=auto_malloc(0x10);
+
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x785000, 0x78500f, 0, 0, sharedram_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x785000, 0x78500f, 0, 0, sharedram_w);
+
+	/* extra inputs */
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, sb2b_770071_r);
+    memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, sb2b_770079_r);
+
+	// boot vector
+	dst[0xfffc] = 0xec;
+	dst[0xfffd] = 0x80;
+
+	init_snes_hirom();
+}
+
+static DRIVER_INIT(wldgunsb)
+{
+	int i, j;
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+
+	static UINT8 address_tab_high[0x20] = {
+		0x0b, 0x1d, 0x05, 0x15, 0x09, 0x19, 0x04, 0x13, 0x02, 0x1f, 0x07, 0x17, 0x0d, 0x11, 0x0a, 0x1a,
+		0x14, 0x0e, 0x18, 0x06, 0x1e, 0x01, 0x10, 0x0c, 0x1b, 0x0f, 0x16, 0x00, 0x12, 0x08, 0x1c, 0x03 
+	};
+
+	static UINT8 address_tab_low[0x40] = {
+		0x14, 0x1d, 0x11, 0x3c, 0x0a, 0x29, 0x2d, 0x2e, 0x30, 0x32, 0x16, 0x36, 0x05, 0x25, 0x26, 0x37,
+		0x20, 0x21, 0x27, 0x28, 0x33, 0x34, 0x23, 0x12, 0x1e, 0x1f, 0x3b, 0x24, 0x2c, 0x35, 0x38, 0x39,
+		0x3d, 0x0c, 0x2a, 0x0d, 0x22, 0x18, 0x19, 0x1a, 0x03, 0x08, 0x04, 0x3a, 0x0b, 0x0f, 0x15, 0x17,
+		0x1b, 0x13, 0x00, 0x1c, 0x2b, 0x01, 0x06, 0x2f, 0x07, 0x09, 0x02, 0x31, 0x10, 0x0e, 0x3f, 0x3e
+	};
+
+	static const UINT8 data_low[16] = {
+		0x30, 0xa8, 0x80, 0xb0, 0x90, 0x00, 0x20, 0xa0, 0x08, 0xb8, 0x38, 0x18, 0x88, 0x10, 0x28, 0x98
+	};
+
+	static const UINT8 data_high[16] = {
+		0x05, 0x43, 0x40, 0x45, 0x44, 0x00, 0x01, 0x41, 0x02, 0x47, 0x07, 0x06, 0x42, 0x04, 0x03, 0x46
+	};
+
+	for (i = 0; i < 0x100000; i++)
+	{
+		j = (address_tab_high[i >> 15] << 15) + (i & 0x7fc0) + address_tab_low[i & 0x3f];
+
+		dst[i] = data_high[src[j]>>4] | data_low[src[j]&0xf];
+
+		if (i >= 0x00000 && i < 0x10000) {
+			dst[i] = BITSWAP8(dst[i], 3, 1, 7, 0, 6, 4, 5, 2) ^ 0xff;
+		}
+
+		if (i >= 0x10000 && i < 0x20000) {
+			dst[i] = BITSWAP8(dst[i], 4, 7, 3, 2, 0, 1, 6, 5);
+		}
+
+		if (i >= 0x20000 && i < 0x30000) {
+			dst[i] = BITSWAP8(dst[i], 6, 0, 7, 1, 4, 3, 5, 2) ^ 0xff;
+		}
+
+		if (i >= 0x30000 && i < 0x40000) {
+			dst[i] = BITSWAP8(dst[i], 0, 2, 6, 4, 1, 5, 7, 3);
+		}
+	}
+
+	// boot vector
+	dst[0x7ffc] = 0x40;
+	dst[0x7ffd] = 0x80;
+
+	shared_ram=auto_malloc(0x22);
+
+	// initialize continue counter
+	shared_ram[0x10] = 9;
+	shared_ram[0x12] = 0;
+
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x781021, 0, 0, sharedram_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x781021, 0, 0, sharedram_w);
+
+
+	// extra inputs
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, iron_770071_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770073, 0x770073, 0, 0, iron_770073_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, iron_770079_r);
+	
+	
+	// protection overlays
+	// counter (PC=0x2dfe7 / 0x2dfee)
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x7bf45b, 0x7bf45b, 0, 0, sb2b_75bd37_r);
+
+	// these reads with a LDA but discards the upper 8-bit values
+	// POST
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x722262, 0x722262, 0, 0, wldgunsb_722262_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x723363, 0x723363, 0, 0, wldgunsb_723364_r);
+	// in-game
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x721197, 0x721197, 0, 0, wldgunsb_721197_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x72553b, 0x72553b, 0, 0, wldgunsb_72553b_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x72443a, 0x72443a, 0, 0, wldgunsb_72443a_r);
+
+	init_snes();
+}
+
+static DRIVER_INIT(tmntmwb)
+{
+	int i, j, x;
+	UINT8 *src = memory_region(REGION_USER7);
+	UINT8 *dst = memory_region(REGION_USER3);
+
+	static UINT8 address_tab_high[0x40] = {
+		0x0b, 0x1d, 0x38, 0x26, 0x09, 0x19, 0x30, 0x2c, 0x02, 0x1f, 0x36, 0x20, 0x0d, 0x11, 0x3c, 0x23,
+		0x14, 0x2e, 0x05, 0x35, 0x1e, 0x21, 0x04, 0x33, 0x1b, 0x2f, 0x07, 0x37, 0x12, 0x28, 0x0a, 0x3a,
+		0x2b, 0x3d, 0x18, 0x06, 0x29, 0x39, 0x10, 0x0c, 0x22, 0x3f, 0x16, 0x00, 0x2d, 0x31, 0x1c, 0x03,
+		0x34, 0x0e, 0x25, 0x15, 0x3e, 0x01, 0x24, 0x13, 0x3b, 0x0f, 0x27, 0x17, 0x32, 0x08, 0x2a, 0x1a
+	};
+
+	static UINT8 address_tab_low[0x40] = {
+		0x14, 0x1d, 0x11, 0x3c, 0x0a, 0x29, 0x2d, 0x2e, 0x30, 0x32, 0x16, 0x36, 0x05, 0x25, 0x26, 0x37,
+		0x20, 0x21, 0x27, 0x28, 0x33, 0x34, 0x23, 0x12, 0x1e, 0x1f, 0x3b, 0x24, 0x2c, 0x35, 0x38, 0x39,
+		0x3d, 0x0c, 0x2a, 0x0d, 0x22, 0x18, 0x19, 0x1a, 0x03, 0x08, 0x04, 0x3a, 0x0b, 0x0f, 0x15, 0x17,
+		0x1b, 0x13, 0x00, 0x1c, 0x2b, 0x01, 0x06, 0x2f, 0x07, 0x09, 0x02, 0x31, 0x10, 0x0e, 0x3f, 0x3e
+	};
+
+	static const UINT8 data_low[16]  = {
+		0x84, 0x20, 0x26, 0x04, 0x06, 0xa6, 0xa4, 0x24, 0xa2, 0x00, 0x80, 0x82, 0x22, 0x86, 0xa0, 0x02
+	};
+
+	static const UINT8 data_high[16] = {
+		0x41, 0x08, 0x58, 0x40, 0x50, 0x59, 0x49, 0x48, 0x19, 0x00, 0x01, 0x11, 0x18, 0x51, 0x09, 0x10
+	};
+
+	for (i = 0; i < 0x200000; i++)
+	{
+		j = (address_tab_high[i >> 15] << 15) + (i & 0x7fc0) + (address_tab_low[i & 0x3f]);
+
+		UINT8 x = src[j];
+		if (~i & 0x1000) x -= 0xb9;
+
+		x = data_high[x >> 4] | data_low[x & 0xf];
+
+		if (i >= 0x00000 && i < 0x10000)
+			x = BITSWAP8(x, 6, 1, 3, 0, 7, 2, 4, 5) ^ 0xff;
+
+		if (i >= 0x10000 && i < 0x20000)
+			x = BITSWAP8(x, 7, 3, 1, 2, 5, 4, 6, 0) ^ 0xff;
+
+		if (i >= 0x20000 && i < 0x30000)
+			x = BITSWAP8(x, 0, 4, 5, 6, 1, 2, 7, 3);
+
+		if (i >= 0x30000 && i < 0x40000)
+			x = BITSWAP8(x, 1, 2, 6, 3, 4, 5, 0, 7) ^ 0xff;
+
+		dst[i] = x;
+	}
+
+	//  boot vector
+	dst[0x7ffc] = 0x72;
+	dst[0x7ffd] = 0xff;
+
+	shared_ram=auto_malloc(0x100);
+
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x7810ff, 0, 0, sharedram_r);
+	memory_install_write8_handler(0, ADDRESS_SPACE_PROGRAM, 0x781000, 0x7810ff, 0, 0, sharedram_w);
+
+
+	// extra inputs
+   	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770071, 0x770071, 0, 0, sb2b_770071_r);
+    memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x770079, 0x770079, 0, 0, sb2b_770079_r);
+    
+	// protection
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x7103cd, 0x7103ce, 0, 0, tmntmwb_7103cd_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x7065f0, 0x7065f1, 0, 0, tmntmwb_7065f0_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x7132cc, 0x7132cd, 0, 0, tmntmwb_7132cc_r);
+	memory_install_read8_handler(0, ADDRESS_SPACE_PROGRAM, 0x7010f1, 0x7010f2, 0, 0, tmntmwb_7010f1_r);
+
+	init_snes();
+}
+
+ROM_START( kinstb )
+	ROM_REGION( 0x400000, REGION_USER3, ROMREGION_DISPOSE )
+	ROM_LOAD( "1.u14", 0x000000, 0x100000, CRC(70889919) SHA1(1451714cbdacb7f6ced2bc7afa478ad7264cf3b7) )
+	ROM_LOAD( "2.u15", 0x100000, 0x100000, CRC(e4a5d1da) SHA1(6ae566bd2f740a251d7a81b8ebb92a651cfaac8d) )
+	ROM_LOAD( "3.u16", 0x200000, 0x100000, CRC(7a40f7dd) SHA1(cebe632e8d2d68d0619077cc1e931af73c9a723b) )
+	ROM_LOAD( "4.u17", 0x300000, 0x100000, CRC(3d7564c1) SHA1(392b513991897668d5dd469ac84a34f785895774) )
+
+	ROM_REGION(0x100,           REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,           REGION_USER6, ROMREGION_ERASEFF)
+
+ROM_END
+
+ROM_START( ffight2b )
+	ROM_REGION( 0x400000, REGION_USER3, ROMREGION_DISPOSE )
+	ROM_LOAD( "ff2_3.u6", 0x000000, 0x008000, CRC(343bf582) SHA1(cc6b7219bb2fe61f0b377b606ad28b0e5a78be0b) )
+	ROM_CONTINUE(          0x088000, 0x008000 )
+	ROM_CONTINUE(          0x010000, 0x008000 )
+	ROM_CONTINUE(          0x098000, 0x008000 )
+	ROM_CONTINUE(          0x020000, 0x008000 )
+	ROM_CONTINUE(          0x0a8000, 0x008000 )
+	ROM_CONTINUE(          0x030000, 0x008000 )
+	ROM_CONTINUE(          0x0b8000, 0x008000 )
+	ROM_CONTINUE(          0x040000, 0x008000 )
+	ROM_CONTINUE(          0x0c8000, 0x008000 )
+	ROM_CONTINUE(          0x050000, 0x008000 )
+	ROM_CONTINUE(          0x0d8000, 0x008000 )
+	ROM_CONTINUE(          0x060000, 0x008000 )
+	ROM_CONTINUE(          0x0e8000, 0x008000 )
+	ROM_CONTINUE(          0x070000, 0x008000 )
+	ROM_CONTINUE(          0x0f8000, 0x008000 )
+	ROM_LOAD( "ff2_2.u7", 0x080000, 0x008000, CRC(b2078ae5) SHA1(e7bc3ad26ed672707d0dcfcaff238aad74986532) )
+	ROM_CONTINUE(          0x008000, 0x008000 )
+	ROM_CONTINUE(          0x090000, 0x008000 )
+	ROM_CONTINUE(          0x018000, 0x008000 )
+	ROM_CONTINUE(          0x0a0000, 0x008000 )
+	ROM_CONTINUE(          0x028000, 0x008000 )
+	ROM_CONTINUE(          0x0b0000, 0x008000 )
+	ROM_CONTINUE(          0x038000, 0x008000 )
+	ROM_CONTINUE(          0x0c0000, 0x008000 )
+	ROM_CONTINUE(          0x048000, 0x008000 )
+	ROM_CONTINUE(          0x0d0000, 0x008000 )
+	ROM_CONTINUE(          0x058000, 0x008000 )
+	ROM_CONTINUE(          0x0e0000, 0x008000 )
+	ROM_CONTINUE(          0x068000, 0x008000 )
+	ROM_CONTINUE(          0x0f0000, 0x008000 )
+	ROM_CONTINUE(          0x078000, 0x008000 )
+	ROM_LOAD( "ff2_1.u8", 0x100000, 0x040000, CRC(ea315ac1) SHA1(a85de091882d35bc77dc99677511828ff7c20350) )
+
+	ROM_REGION(0x100,           REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,           REGION_USER6, ROMREGION_ERASEFF)
+
+ROM_END
+
+ROM_START( ffight3b ) // CS101P049-1 PCB
+	ROM_REGION( 0x300000, REGION_USER3, ROMREGION_ERASEFF )
+	ROM_LOAD( "801.u6",  0x000000, 0x080000, CRC(b6c637a7) SHA1(8ab041b9d7ab4318002b11bb876bce8f9764f644) )
+	ROM_CONTINUE(        0x280000, 0x080000)
+	ROM_LOAD( "801.u7",  0x100000, 0x100000, CRC(efbdd541) SHA1(85c7a674bd976414e916b87239571615d255d7eb) )
+	ROM_LOAD( "801.u8",  0x200000, 0x080000, CRC(6e2f7309) SHA1(ad5f37d79590c4bc4b1d33432595eb9d53f1bb90) )
+	ROM_CONTINUE(        0x080000, 0x080000)
+	
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+ROM_END
+
+ROM_START( ffight3b2 )
+	ROM_REGION( 0x300000, REGION_USER3, ROMREGION_ERASEFF )
+	ROM_LOAD( "4.u34",   0x000000, 0x080000, CRC(0b4711cd) SHA1(9f9f325026a2605105233fb63ef5046b1d606979) )
+	ROM_LOAD( "2.u36",   0x200000, 0x080000, CRC(6e2f7309) SHA1(ad5f37d79590c4bc4b1d33432595eb9d53f1bb90) )
+	ROM_CONTINUE(        0x080000, 0x080000)
+	ROM_LOAD( "3.u35",   0x100000, 0x100000, CRC(efbdd541) SHA1(85c7a674bd976414e916b87239571615d255d7eb) )
+	ROM_LOAD( "1.u37",   0x280000, 0x080000, CRC(b69e9eaf) SHA1(7a06245016b20e529eb3bc8cd186e2a335873372) )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+ROM_END
+
+
+ROM_START( legendsb )
+	ROM_REGION( 0x100000, REGION_USER3, 0 )
+	ROM_LOAD( "u37",   0x000000, 0x008000, BAD_DUMP CRC(bbcb643f) SHA1(f8c013a50ad43aca231032c731c14d298a7a1e31) ) // Combined from a number of bad dumps
+	ROM_CONTINUE(      0x088000, 0x008000 )
+	ROM_CONTINUE(      0x010000, 0x008000 )
+	ROM_CONTINUE(      0x098000, 0x008000 )
+	ROM_CONTINUE(      0x020000, 0x008000 )
+	ROM_CONTINUE(      0x0a8000, 0x008000 )
+	ROM_CONTINUE(      0x030000, 0x008000 )
+	ROM_CONTINUE(      0x0b8000, 0x008000 )
+	ROM_CONTINUE(      0x040000, 0x008000 )
+	ROM_CONTINUE(      0x0c8000, 0x008000 )
+	ROM_CONTINUE(      0x050000, 0x008000 )
+	ROM_CONTINUE(      0x0d8000, 0x008000 )
+	ROM_CONTINUE(      0x060000, 0x008000 )
+	ROM_CONTINUE(      0x0e8000, 0x008000 )
+	ROM_CONTINUE(      0x070000, 0x008000 )
+	ROM_CONTINUE(      0x0f8000, 0x008000 )
+	ROM_LOAD( "u36",   0x080000, 0x008000, CRC(c33a5362) SHA1(537b1b7ef22baa289523fac8f9843db155408c56) )
+	ROM_CONTINUE(      0x008000, 0x008000 )
+	ROM_CONTINUE(      0x090000, 0x008000 )
+	ROM_CONTINUE(      0x018000, 0x008000 )
+	ROM_CONTINUE(      0x0a0000, 0x008000 )
+	ROM_CONTINUE(      0x028000, 0x008000 )
+	ROM_CONTINUE(      0x0b0000, 0x008000 )
+	ROM_CONTINUE(      0x038000, 0x008000 )
+	ROM_CONTINUE(      0x0c0000, 0x008000 )
+	ROM_CONTINUE(      0x048000, 0x008000 )
+	ROM_CONTINUE(      0x0d0000, 0x008000 )
+	ROM_CONTINUE(      0x058000, 0x008000 )
+	ROM_CONTINUE(      0x0e0000, 0x008000 )
+	ROM_CONTINUE(      0x068000, 0x008000 )
+	ROM_CONTINUE(      0x0f0000, 0x008000 )
+	ROM_CONTINUE(      0x078000, 0x008000 )
+
+	ROM_REGION(0x100,           REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,           REGION_USER6, ROMREGION_ERASEFF)
+ROM_END
+
+ROM_START( sblast2b )
+	ROM_REGION( 0x180000, REGION_USER3, ROMREGION_DISPOSE )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+	
+	ROM_REGION( 0x180000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "1.bin", 0x000000, 0x0080000, CRC(bea10c40) SHA1(d9cc65267b9b57145d714f2c17b436c1fb21513f) )
+	ROM_LOAD( "2.bin", 0x080000, 0x0080000, CRC(57d2b6e9) SHA1(1a7b347101f67b254e2f86294d501b0669431644) )
+	ROM_LOAD( "3.bin", 0x100000, 0x0080000, CRC(9e63a5ce) SHA1(1d18606fbb28b55a921fc37e1af1aff4caae9003) )
+	
+ROM_END
+
+ROM_START( iron )
+	ROM_REGION( 0x400000, REGION_USER3, ROMREGION_DISPOSE )
+	ROM_LOAD( "6.c09.bin", 0x000000, 0x080000, CRC(50ea1457) SHA1(092f9a0e34deeb090b8c88553be3b1596ded60ef) )
+	ROM_LOAD( "5.c10.bin", 0x080000, 0x080000, CRC(0c3a0b5b) SHA1(1e8ab860689137e0e94731f1af2cfc561492b5bd) )
+	ROM_LOAD( "4.c11.bin", 0x100000, 0x040000, CRC(2aa417c7) SHA1(24b375e5bbd4be5dcd31b63ea98fbbadd53d543e) )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+ROM_END
+
+ROM_START( denseib )
+	ROM_REGION( 0x200000, REGION_USER3, ROMREGION_ERASEFF )
+	ROM_LOAD( "dj.u14", 0x000000, 0x0080000, CRC(487ded13) SHA1(624edce30fe2f2d750bcb49c609ceb511b2279b1) )
+	ROM_LOAD( "dj.u15", 0x080000, 0x0080000, CRC(5932a440) SHA1(6048372268a097b08d9f56ad30f083267d798165) )
+	ROM_LOAD( "dj.u16", 0x100000, 0x0080000, CRC(7cb71fd7) SHA1(7673e9dcaabe804e2d637e67eabca1683dad4245) )
+	ROM_LOAD( "dj.u17", 0x180000, 0x0080000, CRC(de29dd89) SHA1(441aefbc7ee64515ee66431ef504e76dc8dc5ca3) )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+ROM_END
+
+ROM_START( denseib2 )
+	ROM_REGION( 0x200000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+	ROM_REGION( 0x200000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "u31.bin", 0x000000, 0x080000, CRC(834723a8) SHA1(3f56bba5017f77147e7d52618678f1e2eff4991b) )
+	ROM_LOAD( "u32.bin", 0x080000, 0x080000, CRC(9748e86b) SHA1(68a62e0961d735602ae6ebd1aca5990c588ccbb1) )
+	ROM_LOAD( "u33.bin", 0x100000, 0x080000, CRC(abcc6b61) SHA1(ef90f23b674f6dd36b3d60c9c395a1d4bc853798) )
+	ROM_LOAD( "u34.bin", 0x180000, 0x080000, CRC(0a16ac96) SHA1(ddc11009d4b35a151aa7e357346f3ac109e112ef) )
+ROM_END
+
+ROM_START( endless )
+	ROM_REGION( 0x400000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+    ROM_REGION( 0x200000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "endlessduel.unknownposition1", 0x000000, 0x80000, CRC(e49acd29) SHA1(ac137261fe7a7691738ac812bea9591256eb9038) )
+	ROM_LOAD( "endlessduel.unknownposition2", 0x080000, 0x80000, CRC(ad2052f9) SHA1(d61382e3d93eb0bff45fb534cec0ce5ae3626165) )
+	ROM_LOAD( "endlessduel.unknownposition3", 0x100000, 0x80000, CRC(30d06d7a) SHA1(17c617d94abb10c3bdf9d51013b116f4ef4debe8) )
+	ROM_LOAD( "endlessduel.unknownposition4", 0x180000, 0x80000, CRC(9a9493ad) SHA1(82ee4fce9cc2014cb8404fd43eebb7941cdb9ac1) )
+ROM_END
+
+ROM_START( endlessa )
+	ROM_REGION( 0x400000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+	ROM_REGION( 0x200000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "gundam wing endless duel.c23", 0x000000, 0x80000, CRC(e49acd29) SHA1(ac137261fe7a7691738ac812bea9591256eb9038) )
+	ROM_LOAD( "gundam wing endless duel.c20", 0x080000, 0x80000, CRC(cf22a554) SHA1(86a31c83a1d28038c334949e82182c07010ccb3c) )
+	ROM_LOAD( "gundam wing endless duel.c22", 0x100000, 0x80000, CRC(30d06d7a) SHA1(17c617d94abb10c3bdf9d51013b116f4ef4debe8) )
+	ROM_LOAD( "gundam wing endless duel.c21", 0x180000, 0x80000, CRC(0cc430c0) SHA1(fb36359e7e3919244c47a6da43f31dc2a79fcba6) )
+ROM_END
+
+ROM_START( rushbets )
+	ROM_REGION( 0x200000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+	ROM_REGION( 0x200000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "ic19.bin", 0x000000, 0x80000, CRC(8aa0ad59) SHA1(83facb65c53ade99f1f057a8de27bee4a9c2efd8) )
+	ROM_LOAD( "ic20.bin", 0x080000, 0x80000, CRC(a8afe28b) SHA1(16d1c4f957804d22dc05a97c56ae10c408dbc1f2) )
+	ROM_LOAD( "ic21.bin", 0x100000, 0x80000, CRC(2f6e8711) SHA1(fe4030ef3445594455fe93e374a41e9ba2147bf6) )
+	ROM_LOAD( "ic22.bin", 0x180000, 0x80000, CRC(95a234d2) SHA1(31a556c8ed395f61ba198631ee086c18cc740792) )
+ROM_END
+
+ROM_START( tmntmwb ) // all 27c4000
+	ROM_REGION( 0x200000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+	ROM_REGION( 0x200000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "u14", 0x000000, 0x080000, CRC(d2bdc126) SHA1(fa8f03b73f2f9b7a159699b764e2c46b5f8a8190) )
+	ROM_LOAD( "u15", 0x080000, 0x080000, CRC(50f9acb1) SHA1(a86bc98f81dc2c9443fbcd9b5f4880b8d5851ed6) )
+	ROM_LOAD( "u16", 0x100000, 0x080000, CRC(2a7f40f3) SHA1(e0db49969880af1edbadd8bc5a1bc59a55777d23) )
+	ROM_LOAD( "u17", 0x180000, 0x080000, CRC(09817173) SHA1(e2ad9e7e1a95cde9ee973647dbd5df83b524978b) )
+ROM_END
+
+ROM_START( venom )
+	ROM_REGION( 0x300000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+	ROM_REGION( 0x300000, REGION_USER7, ROMREGION_DISPOSE )
+    ROM_LOAD( "u31.bin", 0x000000, 0x0100000, CRC(d1034a76) SHA1(541dd92197ca2e4eb686e426c840aad847d02be8) )
+    ROM_LOAD( "u32.bin", 0x100000, 0x0100000, CRC(fbe865b0) SHA1(25467a6faa912bf180c5dd7aecee77c3b5f207f8) )
+    ROM_LOAD( "u33.bin", 0x200000, 0x0080000, CRC(ed874ca2) SHA1(cfc90b38ea2eea07e990f0b72d7c1af2a7076beb) )
+    ROM_LOAD( "u34.bin", 0x280000, 0x0080000, CRC(7a09c9e0) SHA1(794965d5501ec0e21f1f3a8cb8fd66f913d42760) )
+ROM_END
+
+ROM_START( wldgunsb )
+	ROM_REGION( 0x100000, REGION_USER3, ROMREGION_ERASEFF )
+
+	ROM_REGION(0x100,     REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+
+	ROM_REGION(0x800,     REGION_USER6, ROMREGION_ERASEFF)
+
+	ROM_REGION( 0x100000, REGION_USER7, ROMREGION_DISPOSE )
+	ROM_LOAD( "c19.bin", 0x000000, 0x080000, CRC(59df0dc8) SHA1(d18b7f204ad4e0fcd64c2e2a25d60b64930419e7) )
+	ROM_LOAD( "c20.bin", 0x080000, 0x080000, CRC(62ae4acb) SHA1(62aa320bcc7eeedb00c70baa909ac0230256c9a4) )
+ROM_END
+
+ROM_START( piratdwb )
+	ROM_REGION( 0x100000, REGION_USER3, 0 )
+	ROM_LOAD( "rom2", 0x000000, 0x080000, CRC(026247eb) SHA1(3eabfa06cce1f9227c5b957e7624a6879783133a) )
+	ROM_LOAD( "rom1", 0x080000, 0x080000, CRC(770a23f2) SHA1(ff4f750da7161089b4000a91e7c9b29bd7b73df1) )
+
+	ROM_REGION( 0x40000, REGION_CPU3, 0 )
+	ROM_LOAD16_BYTE( "1", 0x00000, 0x20000, CRC(4ad4d7ab) SHA1(15bf2a47af8c778ba81f8f17430f1ea0fe6cfc63) )
+	ROM_LOAD16_BYTE( "2", 0x00001, 0x20000, CRC(81fb1936) SHA1(ba7168a6f117eb9722180eb6cd78f69fc1db90ec) )
+	ROM_REGION(0x100, REGION_USER5, 0)
+	BIOS_LOAD( "s_smp", "spc700.rom", 0, 0x40, CRC(44bb3a40) SHA1(97e352553e94242ae823547cd853eecda55c20f0) )
+	ROM_REGION(0x800, REGION_USER6, ROMREGION_ERASEFF)
+ROM_END
+
+GAME( 199?, kinstb,       0,         kinstb,	 kinstb,    kinstb,	ROT0, "bootleg",    "Killer Instinct (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, ffight2b,     0,         ffight2b,	 ffight2b,  ffight2b,	ROT0, "bootleg",    "Final Fight 2 (SNES bootleg)", GAME_IMPERFECT_SOUND )
+GAME( 199?, ffight3b,     0,         ffight3b,   iron,      ffight3b,   ROT0, "bootleg",    "Final Fight 3 (SNES bootleg, set 1)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 199?, ffight3b2,    ffight3b,  ffight3b,   iron,      ffight3b,   ROT0, "bootleg",    "Final Fight 3 (SNES bootleg, set 2)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, iron,         0,         kinstb,	 iron,      iron,	ROT0, "bootleg",    "Iron (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, denseib,      0,         kinstb,	 denseib,   denseib,	ROT0, "bootleg",    "Ghost Chaser Densei (SNES bootleg, set 1)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, denseib2,     denseib,   kinstb,	 denseib,   denseib2,	ROT0, "bootleg",    "Ghost Chaser Densei (SNES bootleg, set 2)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1997, sblast2b,     0,         kinstb,	 sblast2b,  sblast2b,	ROT0, "bootleg",    "Sonic Blast Man TURBO 2 (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_SOUND )
+GAME( 1997, tmntmwb,      0,         kinstb,     sblast2b,  tmntmwb,    ROT0, "bootleg",    "Teenage Mutant Ninja Turtles - Mutant Warriors (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, endless,      0,         kinstb,	 iron,      endless,    ROT0, "bootleg",    "Gundam Wing: Endless Duel (SNES bootleg, set 1)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, endlessa,     endless,   kinstb,	 iron,      endless,    ROT0, "bootleg",    "Gundam Wing: Endless Duel (SNES bootleg, set 2)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, legendsb,     0,         kinstb,     iron,      legendsb,   ROT0, "bootleg",    "Legend (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1997, rushbets,     0,         ffight2b,   sblast2b,  rushbets,   ROT0, "bootleg",    "Rushing Beat Shura (SNES bootleg)",  GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1997, venom,        0,         kinstb,     iron,      venom,      ROT0, "bootleg",    "Venom & Spider-Man - Separation Anxiety (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )
+GAME( 1996, wldgunsb,     0,         kinstb,     iron,      wldgunsb,   ROT0, "bootleg",    "Wild Guns (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS ) // based off Japanese version
+GAME( 1996, piratdwb, 0, piratdwb, piratdwb, piratdwb, ROT0, "bootleg (Conny)", "The Pirates of Dark Water (SNES bootleg)", GAME_IMPERFECT_SOUND | GAME_IMPERFECT_GRAPHICS )

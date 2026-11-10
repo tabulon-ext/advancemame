@@ -6,14 +6,14 @@ Synopsis
 	:	[/n SIZE] [/m]
 
 Description
-	The `videow' utility can be used to control the video
-	output of the PC in Windows NT/2000/XP.
+	The `videow` utility can be used to control the video
+	output of the PC in Windows 2000/XP.
 
-	It requires the `svgawin' driver installed and running.
+	It requires the `svgawin` driver installed and running.
 
-	The modelines are read from the file `videow.rc'.
+	The modelines are read from the file `videow.rc`.
 	The format of this configuration file is specified in the
-	document `advv.txt'.
+	document `advv.txt`.
 
 	These are some example rc files:
 
@@ -38,7 +38,7 @@ Options
 
 	/o
 		Set the original Windows mode. Use this option if
-		the screen become unreadable.
+		the screen becomes unreadable.
 
 	/d
 		Disable the hardware video signal.
@@ -48,23 +48,23 @@ Options
 
 	/c CONFIG
 		Use an arbitrary configuration file instead of the
-		standard `videow.rc' file.
+		standard `videow.rc` file.
 
 	/p
-		Print some info of the video board.
+		Print some info about the video board.
 
 	/n SIZE
 		Set the length of the scanline in bytes. The program
-		automatically select the smallest scanline size.
+		automatically selects the smallest scanline size.
 
 	/m
 		Enable the use of the hardware mouse pointer.
 
 Cards
-	The program supports all the `svgawin' drivers listed in the
-	`cardwin.txt' file.
+	The program supports all the `svgawin` drivers listed in the
+	`cardwin.txt` file.
 
-	You can force the use of a specific driver using the `device_video'
+	You can force the use of a specific driver using the `device_video`
 	option in the configuration file.
 
 	The available drivers are :
@@ -75,7 +75,7 @@ Cards
 		svgawin/g400 - Matrox Mystique/G100/G200/G400/G450.
 		svgawin/pm2 - Permedia 2.
 		svgawin/savage - S3 Savage.
-		svgawin/millenium - Matrox Millennium/Millenium II.
+		svgawin/millenium - Matrox Millennium/Millennium II.
 		svgawin/r128 - ATI Rage 128/Radeon.
 		svgawin/banshee - 3dfx Voodoo Banshee/3/4/5.
 		svgawin/sis - SIS.
@@ -89,23 +89,23 @@ Cards
 		svgawin/apm - APM.
 
 Limitations
-	* The program can only set the resolutions originally supported
+	* The program can only set resolutions originally supported
 		by Windows. It cannot create new resolutions.
 	* If the video board or the video driver doesn't support interlaced
-		modes, these modes are simulated skipping every odd row.
+		modes, these modes are simulated by skipping every odd row.
 		It doesn't look very good.
-	* The program doesn't stay resident, any successive mode change will
+	* The program doesn't stay resident; any successive mode change will
 		reset the original video mode.
 
 Troubleshooting
-	) If the mouse pointer disappears try to reenable it with the /m option.
+	) If the mouse pointer disappears, try to re-enable it with the /m option.
 
-	) If the screen image is stable but garbled it's probably because
-		the Windows video driver uses a not standard scanline size.
+	) If the screen image is stable but garbled, it's probably because
+		the Windows video driver uses a non-standard scanline size.
 		Try to guess it with the /n option. You should start
 		with the resolution width multiplied by the bytes per pixel.
-		Then, increase this value until the screen become readable.
-		Generally the correct value is multiplier of 2^n where n
+		Then increase this value until the screen becomes readable.
+		Generally the correct value is a multiple of 2^n where n
 		may vary from 1 to 8.
 
 	) Try decreasing the video hardware acceleration.
@@ -124,9 +124,8 @@ Examples
 
 Bugs
 	The configuration file is checked only for the
-	`device_video_modeline' and `device_video' options.
+	`device_video_modeline` and `device_video` options.
 	All the other options are ignored.
 
 Copyright
 	This file is Copyright (C) 2003 Andrea Mazzoleni.
-

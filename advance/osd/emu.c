@@ -87,6 +87,10 @@ static const mame_game* select_game(const char* gamename)
 
 	for (i = 0; mame_game_at(i); ++i) {
 		if (strcmp(gamename, mame_game_name(mame_game_at(i))) == 0) {
+			if (!mame_game_runnable(mame_game_at(i))) {
+				target_err("%s is a non-runnable ROM resource.\n", gamename);
+				return 0;
+			}
 			return mame_game_at(i);
 		}
 		++game_count;
@@ -133,7 +137,7 @@ static const mame_game* select_game(const char* gamename)
 		target_err("\nSimilar names are:\n");
 		for (i = 0; i < print_count && i < game_count; ++i) {
 			const mame_game* game = mame_game_at(game_map[i].index);
-			target_err("%10s %s\n", mame_game_name(game), mame_game_description(game));
+			target_err("%s %s (%s, %s)\n", mame_game_name(game), mame_game_description(game), mame_game_manufacturer(game), mame_game_year(game));
 		}
 	}
 
@@ -228,6 +232,7 @@ static void help(void)
 	target_out("%sdefault        add all the default options at the configuration file\n", slash);
 	target_out("%sremove         remove all the default option from the configuration file\n", slash);
 	target_out("%slog            create a log of operations\n", slash);
+	target_out("%svalidate       validate all driver and ROM declarations\n", slash);
 	target_out("%slistxml        output the rom XML file\n", slash);
 	target_out("%slistbare       output the rom XML file removing info not required by frontends\n", slash);
 	target_out("%srecord FILE    record an .inp file\n", slash);
@@ -326,8 +331,6 @@ static adv_conf_conv STANDARD[] = {
 	{ "*", "device_video_16bit", "*", "%s", "device_color_bgr16", "%s", 0 }, /* rename */
 	{ "*", "device_video_24bit", "*", "%s", "device_color_bgr24", "%s", 0 }, /* rename */
 	{ "*", "device_video_32bit", "*", "%s", "device_color_bgr32", "%s", 0 }, /* rename */
-/* 0.62.3 */
-	{ "*", "display_artwork", "*", "%s", "display_artwork_backdrop", "%s", 0 }, /* rename */
 /* 0.68.0 */
 	{ "*", "display_magnify", "yes", "%s", "%s", "2", 0 }, /* rename */
 	{ "*", "display_magnify", "no", "%s", "%s", "1", 0 }, /* rename */
@@ -542,6 +545,10 @@ static adv_conf_conv STANDARD[] = {
 #ifndef USE_KEYBOARD_SDL
 	{ "*", "device_keyboard", "sdl", "", "", "", 0 }, /* ignore */
 #endif
+/* 4.1 */
+#ifdef MESS
+	{ "*", "dir_crc", "*", "", "", "", 0 }, /* ignore */
+#endif
 };
 
 static void error_callback(void* context, enum conf_callback_error error, const char* file, const char* tag, const char* valid, const char* desc, ...)
@@ -622,6 +629,7 @@ int os_main(int argc, char* argv[])
 	int i;
 	struct mame_option option;
 	int opt_xml;
+	int opt_validate;
 	int opt_bare;
 	int opt_log;
 	int opt_logsync;
@@ -640,6 +648,7 @@ int os_main(int argc, char* argv[])
 	const char* control;
 
 	opt_xml = 0;
+	opt_validate = 0;
 	opt_bare = 0;
 	opt_log = 0;
 	opt_logsync = 0;
@@ -715,6 +724,8 @@ int os_main(int argc, char* argv[])
 			opt_remove = 1;
 		} else if (target_option_compare(argv[i], "debug")) {
 			option.debug_flag = 1;
+		} else if (target_option_compare(argv[i], "validate")) {
+			opt_validate = 1;
 		} else if (target_option_compare(argv[i], "listxml")) {
 			opt_xml = 1;
 		} else if (target_option_compare(argv[i], "listbare")) {
@@ -821,6 +832,12 @@ int os_main(int argc, char* argv[])
 		/* continue execution */
 	}
 
+	if (opt_validate) {
+		if (mame_validate() != 0)
+			goto err_os;
+		goto done_os;
+	}
+
 	if (opt_xml) {
 		mame_print_xml(stdout, 0);
 		goto done_os;
@@ -916,7 +933,9 @@ int os_main(int argc, char* argv[])
 	if (control) {
 		section_map[section_mac++] = strdup(control);
 	}
-	snprintf(buffer, sizeof(buffer), "%dplayer", mame_game_players(option.game));
+	snprintf(buffer, sizeof(buffer), "%dplayers", mame_game_players(option.game));
+	section_map[section_mac++] = strdup(buffer);
+	snprintf(buffer, sizeof(buffer), "%dbuttons", mame_game_buttons(option.game));
 	section_map[section_mac++] = strdup(buffer);
 	section_map[section_mac++] = strdup("");
 	conf_section_set(context->cfg, section_map, section_mac);

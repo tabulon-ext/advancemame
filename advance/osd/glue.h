@@ -91,6 +91,7 @@ struct mame_option {
 	adv_bool artwork_bezel_flag;
 	adv_bool artwork_crop_flag;
 	int artwork_scale;
+	char artwork_view_buffer[MAME_MAXPATH];
 
 	char savegame_file_buffer[MAME_MAXPATH];
 	char language_file_buffer[MAME_MAXPATH];
@@ -101,7 +102,6 @@ struct mame_option {
 	char bios_buffer[MAME_MAXBIOS];
 
 #ifdef MESS
-	char crc_dir_buffer[MAME_MAXPATH];
 	struct mame_image* image_map[MAME_MAXIMAGE];
 	unsigned image_mac;
 	unsigned ram;
@@ -113,6 +113,7 @@ struct mame_option {
 /* MAME interface */
 
 const mame_game* mame_game_at(unsigned index);
+adv_bool mame_game_runnable(const mame_game* game);
 adv_bool mame_game_working(const mame_game* game);
 const char* mame_game_resolution(const mame_game* game);
 const char* mame_game_resolutionclock(const mame_game* game);
@@ -128,7 +129,9 @@ const char* mame_game_description(const mame_game* game);
 const char* mame_game_year(const mame_game* game);
 const char* mame_game_manufacturer(const mame_game* game);
 unsigned mame_game_players(const mame_game* game);
+unsigned mame_game_buttons(const mame_game* game);
 const char* mame_game_control(const mame_game* game);
+int mame_validate(void);
 void mame_print_xml(FILE* out, int bare);
 adv_bool mame_is_game_vector(const mame_game* game);
 adv_bool mame_is_game_relative(const char* relative, const mame_game* game);
@@ -232,6 +235,9 @@ struct mame_digital_map_entry {
 
 #define MAME_PORT_KEYBOARD(keyboard) \
 	MAME_PORT_INDEX(IPT_KEYBOARD, 0, keyboard)
+
+#define MAME_PORT_OTHER(other) \
+	MAME_PORT_INDEX(IPT_OTHER, 0, other)
 
 #define MAME_PORT_TYPE_GET(port) \
 	(((port) & MAME_PORT_TYPE_MASK) >> MAME_PORT_TYPE_SHIFT)

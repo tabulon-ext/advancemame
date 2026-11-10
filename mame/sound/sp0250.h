@@ -1,0 +1,13 @@
+// license:BSD-3-Clause
+// copyright-holders:Olivier Galibert
+#ifndef __SP0250_H__
+#define __SP0250_H__
+
+struct sp0250_interface {
+	void (*drq_callback)(int state);
+};
+
+WRITE8_HANDLER( sp0250_w );
+WRITE8_HANDLER( sp0250_reset_w );
+
+#endif

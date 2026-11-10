@@ -1,3 +1,5 @@
+# license:BSD-3-Clause
+# copyright-holders:Aaron Giles
 # this is a MESS build
 MESS = 1
 
@@ -742,6 +744,7 @@ $(MESSOBJ)/nascom1.a:  \
 	$(MESSOBJ)/mess/systems/nascom1.o
 
 $(MESSOBJ)/cpschngr.a: \
+	$(MESSOBJ)/machine/timekpr.o \
 	$(MESSOBJ)/machine/eeprom.o	     \
 	$(MESSOBJ)/mess/systems/cpschngr.o \
 	$(MESSOBJ)/vidhrdw/cps1.o
@@ -840,7 +843,7 @@ $(MESSOBJ)/lynx.a:     \
 	$(MESSOBJ)/mess/machine/lynx.o
 
 $(MESSOBJ)/mk1.a:      \
-	$(MESSOBJ)/mess/cpu/f8/f3853.o	 \
+	$(MESSOBJ)/cpu/f8/f3853.o	 \
 	$(MESSOBJ)/mess/vidhrdw/mk1.o      \
 	$(MESSOBJ)/mess/systems/mk1.o
 
@@ -1037,49 +1040,3 @@ MESSCOREOBJS +=							\
 	$(MESSOBJ)/mess/machine/serial.o   \
 	$(MESSOBJ)/mess/formats/wavfile.o
 
-
-
-# additional tools
-TOOLS = dat2html$(EXE) messtest$(EXE) chdman$(EXE) messdocs$(EXE) imgtool$(EXE)
-
-include mess/tools/imgtool/imgtool.mak
-
-DAT2HTML_OBJS =								\
-	$(MESSOBJ)/mamecore.o						\
-	$(MESSOBJ)/mess/tools/dat2html/dat2html.o	\
-	$(MESSOBJ)/mess/tools/imgtool/stubs.o		\
-	$(MESSOBJ)/mess/utils.o						\
-
-MESSDOCS_OBJS =								\
-	$(MESSOBJ)/mamecore.o						\
-	$(MESSOBJ)/mess/tools/messdocs/messdocs.o	\
-	$(MESSOBJ)/mess/utils.o						\
-	$(MESSOBJ)/mess/pool.o						\
-	$(EXPAT)								\
-
-MESSTEST_OBJS =								\
-	$(EXPAT)								\
-	$(IMGTOOL_LIB_OBJS)						\
-	$(MESSOBJ)/mess/pile.o						\
-	$(MESSOBJ)/mess/tools/messtest/main.o		\
-	$(MESSOBJ)/mess/tools/messtest/core.o		\
-	$(MESSOBJ)/mess/tools/messtest/testmess.o	\
-	$(MESSOBJ)/mess/tools/messtest/testimgt.o	\
-	$(MESSOBJ)/mess/tools/messtest/tststubs.o	\
-	$(MESSOBJ)/mess/tools/messtest/tstutils.o	\
-
-
-
-# text files
-TEXTS = sysinfo.htm
-
-mess.txt: $(EMULATORCLI)
-	@echo Generating $@...
-	@$(CURPATH)$(EMULATORCLI) -listtext -noclones -sortname > docs/mess.txt
-
-sysinfo.htm: dat2html$(EXE)
-	@echo Generating $@...
-	@$(CURPATH)dat2html$(EXE) sysinfo.dat
-
-mess/makedep/makedep$(EXE): $(wildcard mess/makedep/*.c) $(wildcard mess/makedep/*.h)
-	make -Cmess/makedep

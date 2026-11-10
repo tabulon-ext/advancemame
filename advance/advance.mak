@@ -1,13 +1,8 @@
 ############################################################################
 # Common dir
 
-ifeq ($(CONF_TINY),yes)
-OBJ = obj/mame-tiny/$(BINARYDIR)
-MESSOBJ = obj/mess-tiny/$(BINARYDIR)
-else
 OBJ = obj/mame/$(BINARYDIR)
 MESSOBJ = obj/mess/$(BINARYDIR)
-endif
 MENUOBJ = obj/menu/$(BINARYDIR)
 MOBJ = obj/m/$(BINARYDIR)
 JOBJ = obj/j/$(BINARYDIR)
@@ -19,6 +14,7 @@ BLUEOBJ = obj/blue/$(BINARYDIR)
 CFGOBJ = obj/cfg/$(BINARYDIR)
 LINEOBJ = obj/line/$(BINARYBUILDDIR)
 D2OBJ = obj/d2/$(BINARYBUILDDIR)
+BAREOBJ = obj/bare/$(BINARYDIR)
 DOCOBJ = $(srcdir)/doc
 
 ############################################################################
@@ -30,6 +26,7 @@ MAME_INSTALL_DATAFILES = $(srcdir)/support/event.dat \
 	$(srcdir)/support/history.dat \
 	$(srcdir)/support/hiscore.dat \
 	$(srcdir)/support/cheat.dat \
+	$(srcdir)/support/genre.ini \
 	$(srcdir)/support/category.ini
 # Freely available roms: http://www.mame.net/roms/
 MAME_INSTALL_ROMFILES = $(srcdir)/support/free/rom/gridlee.zip \
@@ -83,6 +80,8 @@ M_INSTALL_BINFILES = $(MOBJ)/advm$(EXE)
 M_INSTALL_MANFILES = $(DOCOBJ)/advm.1
 BLUE_INSTALL_BINFILES = $(BLUEOBJ)/advblue$(EXE)
 BLUE_INSTALL_MANFILES = $(DOCOBJ)/advblue.1
+BARE_INSTALL_BINFILES = $(BAREOBJ)/advbare$(EXE)
+BARE_INSTALL_MANFILES = $(DOCOBJ)/advbare.1
 
 ############################################################################
 # Install
@@ -150,9 +149,14 @@ INSTALL_BINFILES += $(BLUE_INSTALL_BINFILES)
 INSTALL_MANFILES += $(BLUE_INSTALL_MANFILES)
 endif
 endif
+ifneq ($(wildcard $(srcdir)/advance/bare.mak),)
+OBJ_DIRS += $(BAREOBJ)
+INSTALL_BINFILES += $(BARE_INSTALL_BINFILES)
+INSTALL_MANFILES += $(BARE_INSTALL_MANFILES)
+endif
 
 INSTALL_DOCFILES += $(subst $(srcdir)/doc/,$(DOCOBJ)/,$(subst .d,.txt,$(wildcard $(srcdir)/doc/*.d)))
-INSTALL_DOCFILES += $(subst $(srcdir)/doc/,$(DOCOBJ)/,$(subst .d,.html,$(wildcard $(srcdir)/doc/*.d)))
+INSTALL_HTMLFILES += $(subst $(srcdir)/doc/,$(DOCOBJ)/,$(subst .d,.html,$(wildcard $(srcdir)/doc/*.d)))
 WEB_DOCFILES += $(subst $(srcdir)/doc/,$(DOCOBJ)/,$(subst .d,.hh,$(wildcard $(srcdir)/doc/*.d)))
 
 ############################################################################
@@ -162,7 +166,7 @@ ifdef ADV_ALL
 all_override: $(ADV_ALL)
 endif
 
-all: $(OBJ_DIRS) $(INSTALL_BINFILES) $(INSTALL_DOCFILES) $(INSTALL_MANFILES)
+all: $(OBJ_DIRS) $(INSTALL_BINFILES) $(INSTALL_DOCFILES) $(INSTALL_HTMLFILES) $(INSTALL_MANFILES)
 mame: $(OBJ) $(OBJ)/advmame$(EXE)
 mess: $(MESSOBJ) $(MESSOBJ)/advmess$(EXE)
 emu: mame mess
@@ -175,6 +179,7 @@ i: $(IOBJ) $(IOBJ)/advi$(EXE)
 j: $(JOBJ) $(JOBJ)/advj$(EXE)
 m: $(MOBJ) $(MOBJ)/advm$(EXE)
 blue: $(BLUEOBJ) $(BLUEOBJ)/advblue$(EXE)
+bare: $(BAREOBJ) $(BAREOBJ)/advbare$(EXE)
 line: $(LINEOBJ) $(LINEOBJ)/advline$(EXE_FOR_BUILD)
 d2: $(D2OBJ) $(D2OBJ)/advd2$(EXE_FOR_BUILD)
 web: $(WEB_DOCFILES)
@@ -182,7 +187,7 @@ web: $(WEB_DOCFILES)
 # Ensure that the doc target is always created also if a doc directory exists
 .PHONY: doc
 
-doc: $(INSTALL_DOCFILES)
+doc: $(INSTALL_DOCFILES) $(INSTALL_HTMLFILES)
 
 ############################################################################
 # Source
@@ -196,9 +201,9 @@ RCSRC = $(srcdir)/support/pcvga.rc \
 	$(srcdir)/support/ntsc.rc
 
 MPGLIB_SRC = \
-	$(wildcard $(srcdir)/advance/mpglib/*.c) \
-	$(wildcard $(srcdir)/advance/mpglib/*.h) \
-	$(wildcard $(srcdir)/advance/mpglib/*.txt)
+	$(wildcard $(srcdir)/alien/mpglib/*.c) \
+	$(wildcard $(srcdir)/alien/mpglib/*.h) \
+	$(wildcard $(srcdir)/alien/mpglib/*.txt)
 
 LIB_SRC = \
 	$(wildcard $(srcdir)/advance/lib/*.c) \
@@ -219,61 +224,61 @@ BLIT_SRC = \
 CARD_SRC = \
 	$(wildcard $(srcdir)/advance/card/*.c) \
 	$(wildcard $(srcdir)/advance/card/*.h)
-	
+
 SVGALIB_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/*.c) \
-	$(wildcard $(srcdir)/advance/svgalib/*.h) \
-	$(wildcard $(srcdir)/advance/svgalib/*.dif) \
-	$(wildcard $(srcdir)/advance/svgalib/*.txt) \
-	$(wildcard $(srcdir)/advance/svgalib/*.bat) \
-	$(wildcard $(srcdir)/advance/svgalib/*.sh) \
-	$(wildcard $(srcdir)/advance/svgalib/*.cfg) \
-	$(wildcard $(srcdir)/advance/svgalib/*.html)
+	$(wildcard $(srcdir)/alien/svgalib/*.c) \
+	$(wildcard $(srcdir)/alien/svgalib/*.h) \
+	$(wildcard $(srcdir)/alien/svgalib/*.dif) \
+	$(wildcard $(srcdir)/alien/svgalib/*.txt) \
+	$(wildcard $(srcdir)/alien/svgalib/*.bat) \
+	$(wildcard $(srcdir)/alien/svgalib/*.sh) \
+	$(wildcard $(srcdir)/alien/svgalib/*.cfg) \
+	$(wildcard $(srcdir)/alien/svgalib/*.html)
 
 SVGALIBDRIVERS_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/drivers/*.c) \
-        $(wildcard $(srcdir)/advance/svgalib/drivers/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/drivers/*.c) \
+        $(wildcard $(srcdir)/alien/svgalib/drivers/*.h)
 
 SVGALIBCLOCKCHI_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/clockchi/*.c) \
-        $(wildcard $(srcdir)/advance/svgalib/clockchi/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/clockchi/*.c) \
+        $(wildcard $(srcdir)/alien/svgalib/clockchi/*.h)
 
 SVGALIBRAMDAC_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/ramdac/*.c) \
-	$(wildcard $(srcdir)/advance/svgalib/ramdac/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/ramdac/*.c) \
+	$(wildcard $(srcdir)/alien/svgalib/ramdac/*.h)
 
 SVGALIBSVGADOS_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgados/*.c)
+	$(wildcard $(srcdir)/alien/svgalib/svgados/*.c)
 
 SVGALIBSVGAWIN_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/*.c) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/*.c) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/*.h)
 
 SVGALIBSVGAWINSYS_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/sys/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/sys/*.h)
 
 SVGALIBSVGAWININSTALL_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/install/makefile) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/install/*.c) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/install/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/install/makefile) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/install/*.c) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/install/*.h)
 
 SVGALIBSVGAWINDRIVER_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/driver/makefile) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/driver/sources) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/driver/*.rc) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/driver/*.c) \
-	$(wildcard $(srcdir)/advance/svgalib/svgawin/driver/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/driver/makefile) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/driver/sources) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/driver/*.rc) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/driver/*.c) \
+	$(wildcard $(srcdir)/alien/svgalib/svgawin/driver/*.h)
 
 SVGALIBSVGAVDD_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/*.c)
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/*.c)
 
 SVGALIBSVGAVDDVDD_SRC = \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/vdd/makefile) \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/vdd/sources) \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/vdd/*.rc) \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/vdd/*.def) \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/vdd/*.c) \
-	$(wildcard $(srcdir)/advance/svgalib/svgavdd/vdd/*.h)
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/vdd/makefile) \
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/vdd/sources) \
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/vdd/*.rc) \
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/vdd/*.def) \
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/vdd/*.c) \
+	$(wildcard $(srcdir)/alien/svgalib/svgavdd/vdd/*.h)
 
 V_SRC = \
 	$(wildcard $(srcdir)/advance/v/*.c) \
@@ -345,18 +350,48 @@ D2_SRC = \
 	$(wildcard $(srcdir)/advance/d2/*.cc)
 
 EXPAT_SRC = \
-	$(wildcard $(srcdir)/advance/expat/*.c) \
-	$(wildcard $(srcdir)/advance/expat/*.h) \
-	$(wildcard $(srcdir)/advance/expat/COPYING) \
-	$(wildcard $(srcdir)/advance/expat/README) \
-	$(wildcard $(srcdir)/advance/expat/*.diff)
+	$(wildcard $(srcdir)/alien/expat/*.c) \
+	$(wildcard $(srcdir)/alien/expat/*.h) \
+	$(wildcard $(srcdir)/alien/expat/COPYING) \
+	$(wildcard $(srcdir)/alien/expat/README) \
+	$(wildcard $(srcdir)/alien/expat/*.diff)
 
 ZLIB_SRC = \
-	$(wildcard $(srcdir)/advance/zlib/*.c) \
-	$(wildcard $(srcdir)/advance/zlib/*.h) \
-	$(wildcard $(srcdir)/advance/zlib/COPYING) \
-	$(wildcard $(srcdir)/advance/zlib/README) \
-	$(wildcard $(srcdir)/advance/zlib/*.diff)
+	$(wildcard $(srcdir)/alien/zlib/*.c) \
+	$(wildcard $(srcdir)/alien/zlib/*.h) \
+	$(wildcard $(srcdir)/alien/zlib/COPYING) \
+	$(wildcard $(srcdir)/alien/zlib/README) \
+	$(wildcard $(srcdir)/alien/zlib/*.diff)
+
+NANOJPEG_SRC = \
+	$(wildcard $(srcdir)/alien/nanojpeg/*.c) \
+	$(wildcard $(srcdir)/alien/nanojpeg/*.h)
+
+SLJIT_SRC = \
+	$(wildcard $(srcdir)/alien/sljit/*.c) \
+	$(wildcard $(srcdir)/alien/sljit/*.h) \
+	$(wildcard $(srcdir)/alien/sljit/README) \
+	$(wildcard $(srcdir)/alien/sljit/allocator_src/*.c)
+
+LZMA_SRC = \
+	$(wildcard $(srcdir)/alien/lzma/LICENSE) \
+	$(wildcard $(srcdir)/alien/lzma/include/*.h) \
+	$(wildcard $(srcdir)/alien/lzma/src/*.c)
+
+ZSTD_SRC = \
+	$(wildcard $(srcdir)/alien/zstd/*.c) \
+	$(wildcard $(srcdir)/alien/zstd/*.h) \
+	$(wildcard $(srcdir)/alien/zstd/LICENSE)
+
+DR_FLAC_SRC = \
+	$(wildcard $(srcdir)/alien/dr_flac/*.c) \
+	$(wildcard $(srcdir)/alien/dr_flac/*.h)
+
+LIBCHDR_SRC = \
+	$(wildcard $(srcdir)/alien/libchdr/LICENSE.txt) \
+	$(wildcard $(srcdir)/alien/libchdr/include/libchdr/*.h) \
+	$(wildcard $(srcdir)/alien/libchdr/src/*.c) \
+	$(wildcard $(srcdir)/alien/libchdr/src/*.h)
 
 CONF_SRC = \
 	$(srcdir)/Makefile.in \
@@ -373,12 +408,12 @@ CONF_SRC = \
 # Install
 
 pkgdir = $(datadir)/advance
-pkgdocdir = $(docdir)/advance
 
 install-dirs:
 	-$(INSTALL_PROGRAM_DIR) $(DESTDIR)$(bindir)
 	-$(INSTALL_DATA_DIR) $(DESTDIR)$(pkgdir)
-	-$(INSTALL_DATA_DIR) $(DESTDIR)$(pkgdocdir)
+	-$(INSTALL_DATA_DIR) $(DESTDIR)$(docdir)
+	-$(INSTALL_DATA_DIR) $(DESTDIR)$(htmldir)
 	-$(INSTALL_MAN_DIR) $(DESTDIR)$(mandir)/man1
 	-$(INSTALL_DATA_DIR) $(DESTDIR)$(pkgdir)/rom
 	-$(INSTALL_DATA_DIR) $(DESTDIR)$(pkgdir)/sample
@@ -460,18 +495,29 @@ uninstall-bin:
 		rm -f $(DESTDIR)$(bindir)/$$i; \
 	done
 
-install-doc: $(INSTALL_DOCFILES)
+install-doc: $(INSTALL_DOCFILES) $(INSTALL_HTMLFILES)
 ifdef INSTALL_DOCFILES
 	@for i in $(INSTALL_DOCFILES); do \
-		echo "$(INSTALL_DATA) $$i $(DESTDIR)$(pkgdocdir)"; \
-		$(INSTALL_DATA) $$i $(DESTDIR)$(pkgdocdir); \
+		echo "$(INSTALL_DATA) $$i $(DESTDIR)$(docdir)"; \
+		$(INSTALL_DATA) $$i $(DESTDIR)$(docdir); \
+	done
+endif
+ifdef INSTALL_HTMLFILES
+	@for i in $(INSTALL_HTMLFILES); do \
+		echo "$(INSTALL_DATA) $$i $(DESTDIR)$(htmldir)"; \
+		$(INSTALL_DATA) $$i $(DESTDIR)$(htmldir); \
 	done
 endif
 
 uninstall-doc:
 ifdef INSTALL_DOCFILES
 	@for i in $(notdir $(INSTALL_DOCFILES)); do \
-		rm -f $(DESTDIR)$(pkgdocdir)/$$i; \
+		rm -f $(DESTDIR)$(docdir)/$$i; \
+	done
+endif
+ifdef INSTALL_HTMLFILES
+	@for i in $(notdir $(INSTALL_HTMLFILES)); do \
+		rm -f $(DESTDIR)$(htmldir)/$$i; \
 	done
 endif
 
@@ -500,7 +546,8 @@ uninstall-dirs:
 	-rmdir $(DESTDIR)$(pkgdir)/snap/ti99_4a
 	-rmdir $(DESTDIR)$(pkgdir)/snap
 	-rmdir $(DESTDIR)$(pkgdir)
-	-rmdir $(DESTDIR)$(pkgdocdir)
+	-rmdir $(DESTDIR)$(htmldir)
+	-rmdir $(DESTDIR)$(docdir)
 
 install: install-dirs install-bin install-data install-doc install-man
 
@@ -522,7 +569,7 @@ DEFS_LINUX = -DSTDC_HEADERS=1 -DHAVE_SYS_WAIT_H=1 -DHAVE_DIRENT_H=1 -DTIME_WITH_
 # Optimized
 WHOLE_CFLAGS_OPT = -O2 -fomit-frame-pointer -fno-strict-aliasing -fno-strict-overflow -fno-merge-constants -Wall -Wno-sign-compare -Wno-unused
 WHOLE_CFLAGS_EMU =
-WHOLE_LDFLAGS = -s
+WHOLE_LDFLAGS =
 
 ARCH_X86 = CONF_MAP=yes CONF_ARCH=x86 CONF_CFLAGS_OPT="-march=i686 $(WHOLE_CFLAGS_OPT)" CONF_CFLAGS_EMU="$(WHOLE_CFLAGS_EMU)" CONF_LDFLAGS="$(WHOLE_LDFLAGS)"
 
@@ -566,7 +613,8 @@ DEB_BINFILES = \
 	$(K_INSTALL_BINFILES) \
 	$(J_INSTALL_BINFILES) \
 	$(M_INSTALL_BINFILES) \
-	$(BLUE_INSTALL_BINFILES)
+	$(BLUE_INSTALL_BINFILES) \
+	$(BARE_INSTALL_BINFILES)
 DEB_MANFILES = \
 	$(MAME_INSTALL_MANFILES) \
 	$(MESS_INSTALL_MANFILES) \
@@ -577,7 +625,8 @@ DEB_MANFILES = \
 	$(K_INSTALL_MANFILES) \
 	$(J_INSTALL_MANFILES) \
 	$(M_INSTALL_MANFILES) \
-	$(BLUE_INSTALL_MANFILES)
+	$(BLUE_INSTALL_MANFILES) \
+	$(BARE_INSTALL_MANFILES)
 DEB_DATAFILES = \
 	$(MAME_INSTALL_DATAFILES) \
 	$(MESS_INSTALL_DATAFILES)
@@ -588,7 +637,7 @@ DEB_SNAPFILES = $(MAME_INSTALL_SNAPFILES) $(MESS_INSTALL_SNAPFILES)
 DEB_SNAPFILES_TI99_4A = $(MESS_INSTALL_SNAPFILES_TI99_4A)
 DEB_DOCFILES = $(INSTALL_DOCFILES)
 DEB_MACHINE = $(subst armv7l,armhf,$(subst i686,i386,$(subst x86_64,amd64,$(shell uname -m))))
-DEB_DIST_FILE_BIN = advancemame_$(VERSION)-$(DEB_REVISION)_$(DEB_MACHINE)
+DEB_DIST_FILE_BIN = advancemame_$(VERSION)$(SUB)-$(DEB_REVISION)_$(DEB_MACHINE)
 DEB_DIST_DIR_BIN = $(DEB_DIST_FILE_BIN)
 
 deb:
@@ -625,6 +674,12 @@ deb:
 	dpkg-deb --build $(DEB_DIST_DIR_BIN)
 	rm -rf $(DEB_DIST_DIR_BIN)
 
+deb_sdl:
+	make deb SUB=_sdl
+
+deb_fb:
+	make deb SUB=_fb
+
 #############################################################################
 # Development targets
 
@@ -656,7 +711,7 @@ devosdep:
 	rgrep -r WIN32 $(srcdir)/advance
 
 devdef:
-	rgrep -r "^#if" $(srcdir)/advance | grep -v -E "_H$$|USE|__cplusplus|expat|zlib|svgalib|windows|NDEBUG|MESS|linux/.*event|advmame.dif|advmess.dif|/y_tab|/lexyy|/tsr|/card|/dos"
+	rgrep -r "^#if" $(srcdir)/advance | grep -v -E "_H$$|USE|__cplusplus|expat|zlib|svgalib|windows|NDEBUG|MESS|linux/.*event|/y_tab|/lexyy|/tsr|/card|/dos"
 
 devtags:
 	cd advance && ctags -R

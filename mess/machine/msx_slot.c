@@ -1,3 +1,5 @@
+// license:BSD-3-Clause
+// copyright-holders:Wilbert Pol
 /*
  * msx_slot.c : definitions of the different slots 
  *
@@ -11,7 +13,7 @@
  * - Halnote
  *   writes to page 0?
  * - Playball
- *   Unemulated D7756C, same as src/drivers/homerun.c
+ *   Unemulated D7756C, same as mame/drivers/homerun.c
  * - Some ascii8 w/ sram need 32kb sram?
  * - MegaRAM
  * - fmsx painter.rom
